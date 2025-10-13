@@ -1,0 +1,13 @@
+[project]
+name = "sheggle-backend"
+version = "0.1.0"
+description = "Minimal Sheggle site: FastAPI backend + static frontend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[tool.uv]
+# You use uv; this is here just so uv owns the environment/lockfile.
+# Run: uv sync  (from the repo root or ./backend if you prefer a per-dir venv)

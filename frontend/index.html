@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sheggle</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <h1>sheggle</h1>
+      <p id="status">checking backend…</p>
+      <button id="ping">Ping backend</button>
+      <pre id="out"></pre>
+    </main>
+    <script type="module">
+      const statusEl = document.getElementById("status");
+      const out = document.getElementById("out");
+      const API = location.origin.replace(/\/$/, "") + "/api";
+      async function check() {
+        try {
+          const r = await fetch(API + "/health", { cache: "no-store" });
+          const data = await r.json();
+          statusEl.textContent = r.ok ? "backend: OK" : "backend: DOWN";
+          out.textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+          statusEl.textContent = "backend: DOWN";
+          out.textContent = String(e);
+        }
+      }
+      document.getElementById("ping").onclick = check;
+      check();
+    </script>
+  </body>
+</html>
