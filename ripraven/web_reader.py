@@ -1233,6 +1233,11 @@ class ComicWebServer:
                 const mountMatch = rawPath.match(/^(.*?\/api\/ripraven)(?:\/.*)?$/);
                 const basePath = mountMatch ? mountMatch[1] : '';
                 this.apiBase = `${basePath}/api`.replace(/\/{2,}/g, '/');
+                console.info('[RipRaven] API base resolved:', {
+                    pathname: window.location.pathname,
+                    rawPath,
+                    basePath: this.apiBase
+                });
 
                 this.setupElements();
                 this.loadSeries();
