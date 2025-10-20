@@ -14,12 +14,26 @@
         border-radius: 8px;
         overflow: hidden;
         background: #0d1117;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       .ripraven-iframe {
         width: 100%;
         height: 100%;
         border: none;
         background: white;
+        z-index: 1;
+      }
+      .iframe-loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #7d8590;
+        font-size: 0.9rem;
+        z-index: 0;
       }
       .header-row {
         display: flex;
@@ -94,8 +108,9 @@
 
         /* Adjust iframe container for mobile browsers */
         .iframe-container {
-          height: calc(100vh - 6rem);
+          height: calc(100vh - 12rem);
           border-radius: 6px;
+          min-height: 400px; /* Ensure minimum usable height */
         }
 
         /* Optimize tips section for mobile */
@@ -108,6 +123,16 @@
         }
         .tips-section li {
           margin-bottom: 0.25rem;
+        }
+
+        /* Mobile-specific iframe optimizations */
+        .ripraven-iframe {
+          -webkit-overflow-scrolling: touch; /* iOS smooth scrolling */
+        }
+
+        /* Improve touch interactions on mobile */
+        .nav-back a {
+          -webkit-tap-highlight-color: rgba(255, 255, 255, 0.1);
         }
       }
 
@@ -129,8 +154,9 @@
 
         /* Even more compact iframe on very small screens */
         .iframe-container {
-          height: calc(100vh - 5rem);
+          height: calc(100vh - 14rem);
           border-radius: 4px;
+          min-height: 350px; /* Ensure minimum usable height */
         }
 
         .tips-section {
@@ -145,7 +171,8 @@
         }
 
         .iframe-container {
-          height: calc(100vh - 4.5rem);
+          height: calc(100vh - 16rem);
+          min-height: 300px; /* Ensure minimum usable height */
         }
       }
     </style>
@@ -160,13 +187,19 @@
       </div>
 
       <div class="iframe-container">
+        <div class="iframe-loading" id="iframeLoading">
+          📚 Loading RipRaven Comic Reader...
+        </div>
         <iframe
-          src="http://localhost:8000/api/ripraven/"
+          src="/api/ripraven/"
           class="ripraven-iframe"
+          id="ripravenIframe"
           title="RipRaven Comic Reader"
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen>
-          <p>Your browser doesn't support iframes. Please <a href="http://localhost:8000/api/ripraven/" target="_blank">open RipRaven in a new tab</a>.</p>
+          allowfullscreen
+          loading="lazy"
+          onload="hideLoadingIndicator()">
+          <p>Your browser doesn't support iframes. Please <a href="/api/ripraven/" target="_blank">open RipRaven in a new tab</a>.</p>
         </iframe>
       </div>
 
@@ -179,5 +212,29 @@
         </ul>
       </div>
     </main>
+    <script>
+      function hideLoadingIndicator() {
+        const loadingElement = document.getElementById('iframeLoading');
+        if (loadingElement) {
+          loadingElement.style.display = 'none';
+        }
+      }
+
+      // Show loading indicator on iframe error
+      document.getElementById('ripravenIframe').addEventListener('error', function() {
+        const loadingElement = document.getElementById('iframeLoading');
+        if (loadingElement) {
+          loadingElement.innerHTML = '⚠️ Failed to load RipRaven. <a href="/api/ripraven/" target="_blank" style="color: #58a6ff;">Open in new tab</a>';
+        }
+      });
+
+      // Timeout fallback for slow loading
+      setTimeout(function() {
+        const loadingElement = document.getElementById('iframeLoading');
+        if (loadingElement && loadingElement.style.display !== 'none') {
+          loadingElement.innerHTML = '⏱️ Taking longer than expected... <a href="/api/ripraven/" target="_blank" style="color: #58a6ff;">Open in new tab</a>';
+        }
+      }, 10000); // 10 second timeout
+    </script>
   </body>
 </html>
