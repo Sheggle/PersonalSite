@@ -1,0 +1,2 @@
+# This file ensures the data directory is created in git
+# but actual user data (downloads, reading history) will be ignored

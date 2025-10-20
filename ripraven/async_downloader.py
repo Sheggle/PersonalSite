@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""
+Async Downloader - Fast concurrent image downloads with progress tracking
+"""
+
+import asyncio
+import aiohttp
+import aiofiles
+import os
+from pathlib import Path
+from typing import List, Tuple, Optional, Dict
+import time
+
+
+class AsyncDownloader:
+    def __init__(self, output_dir: str = "downloads", max_concurrent: int = 30):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(exist_ok=True)
+        self.max_concurrent = max_concurrent
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+
+        # Session configuration
+        self.timeout = aiohttp.ClientTimeout(total=30, connect=10)
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+    async def download_image(self, session: aiohttp.ClientSession, url: str, filepath: str, image_num: int) -> Tuple[bool, int, str]:
+        """
+        Download a single image.
+        Returns (success, image_number, error_message)
+        """
+        async with self.semaphore:
+            try:
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 404:
+                        return False, image_num, "404 Not Found"
+                    elif response.status != 200:
+                        return False, image_num, f"HTTP {response.status}"
+
+                    # Create directory if it doesn't exist
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+                    # Download and save the file
+                    async with aiofiles.open(filepath, 'wb') as f:
+                        async for chunk in response.content.iter_chunked(8192):
+                            await f.write(chunk)
+
+                    return True, image_num, ""
+
+            except asyncio.TimeoutError:
+                return False, image_num, "Timeout"
+            except Exception as e:
+                return False, image_num, str(e)
+
+    async def find_all_images(self, base_pattern: str, start_number: int = 0, chapter_info: dict = None) -> List[str]:
+        """
+        Find all available images by testing URLs until 404.
+        Returns list of downloaded file paths.
+        """
+        print(f"🚀 Starting concurrent download from: {base_pattern}")
+        print(f"📊 Max concurrent downloads: {self.max_concurrent}")
+
+        if not chapter_info:
+            chapter_info = {'series': 'Unknown', 'chapter': '1'}
+
+        # Create organized folder structure: downloads/<manga>/chapter_<num>/
+        manga_name = chapter_info['series'].replace(' ', '_').replace('-', '_')
+        chapter_folder = f"chapter_{chapter_info['chapter']}"
+        chapter_dir = self.output_dir / manga_name / chapter_folder
+        chapter_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"📁 Saving to: {chapter_dir}")
+
+        downloaded_files = []
+        image_num = start_number
+        consecutive_404s = 0
+        max_consecutive_404s = 5  # Stop after 5 consecutive 404s
+
+        # Track progress
+        start_time = time.time()
+        last_progress_time = start_time
+
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            # Start with a small batch to find the range
+            print(f"🔍 Detecting image range starting from {start_number}...")
+
+            while consecutive_404s < max_consecutive_404s:
+                # Try both jpg and png extensions
+                extensions = ['jpg', 'png', 'jpeg', 'webp']
+                found_image = False
+
+                for ext in extensions:
+                    url = f"{base_pattern}{image_num}.{ext}"
+
+                    # Generate clean filename: page_000.jpg, page_001.jpg, etc.
+                    filename = f"page_{image_num:03d}.{ext}"
+                    filepath = str(chapter_dir / filename)
+
+                    success, _, error = await self.download_image(session, url, filepath, image_num)
+
+                    if success:
+                        downloaded_files.append(filepath)
+                        consecutive_404s = 0  # Reset counter
+                        found_image = True
+
+                        # Progress update
+                        current_time = time.time()
+                        if current_time - last_progress_time >= 1.0:  # Update every second
+                            elapsed = current_time - start_time
+                            rate = len(downloaded_files) / elapsed if elapsed > 0 else 0
+                            print(f"📥 Downloaded {len(downloaded_files)} images | Page {image_num} | {rate:.1f} img/s")
+                            last_progress_time = current_time
+
+                        break  # Found the image with this extension, move to next number
+
+                if not found_image:
+                    consecutive_404s += 1
+
+                image_num += 1
+
+                # Safety limit to prevent infinite loops
+                if image_num > start_number + 1000:
+                    print("⚠️ Reached safety limit of 1000 images, stopping")
+                    break
+
+        total_time = time.time() - start_time
+        avg_rate = len(downloaded_files) / total_time if total_time > 0 else 0
+
+        print(f"\n✅ Download complete!")
+        print(f"📊 Total: {len(downloaded_files)} images in {total_time:.1f}s ({avg_rate:.1f} img/s)")
+        print(f"📁 Saved to: {chapter_dir}")
+
+        # Create completion marker file
+        if downloaded_files:  # Only if we actually downloaded something
+            completion_file = chapter_dir / "completed"
+            try:
+                completion_file.touch()
+                print(f"✅ Completion marker created: {completion_file}")
+            except Exception as e:
+                print(f"⚠️ Could not create completion marker: {e}")
+
+        return downloaded_files
+
+    async def download_specific_range(self, base_pattern: str, start: int, end: int, chapter_info: dict = None) -> List[str]:
+        """
+        Download a specific range of images concurrently.
+        Useful when you know the exact range.
+        """
+        print(f"🚀 Downloading images {start}-{end} from: {base_pattern}")
+        print(f"📊 Max concurrent downloads: {self.max_concurrent}")
+
+        if not chapter_info:
+            chapter_info = {'series': 'Unknown', 'chapter': '1'}
+
+        # Create organized folder structure
+        manga_name = chapter_info['series'].replace(' ', '_').replace('-', '_')
+        chapter_folder = f"chapter_{chapter_info['chapter']}"
+        chapter_dir = self.output_dir / manga_name / chapter_folder
+        chapter_dir.mkdir(parents=True, exist_ok=True)
+
+        tasks = []
+        start_time = time.time()
+
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            # Create download tasks for the range
+            for image_num in range(start, end + 1):
+                # Try common extensions
+                for ext in ['jpg', 'png', 'jpeg']:
+                    url = f"{base_pattern}{image_num}.{ext}"
+                    filename = f"page_{image_num:03d}.{ext}"
+                    filepath = str(chapter_dir / filename)
+
+                    task = self.download_image(session, url, filepath, image_num)
+                    tasks.append((task, filepath, image_num))
+
+            # Execute all downloads concurrently
+            results = await asyncio.gather(*[task for task, _, _ in tasks], return_exceptions=True)
+
+            # Process results
+            downloaded_files = []
+            successful_downloads = 0
+
+            for i, (result, filepath, image_num) in enumerate(zip(results, [t[1] for t in tasks])):
+                if isinstance(result, tuple):
+                    success, _, error = result
+                    if success:
+                        downloaded_files.append(filepath)
+                        successful_downloads += 1
+
+        total_time = time.time() - start_time
+        avg_rate = successful_downloads / total_time if total_time > 0 else 0
+
+        print(f"\n✅ Batch download complete!")
+        print(f"📊 Downloaded: {successful_downloads}/{end-start+1} images in {total_time:.1f}s ({avg_rate:.1f} img/s)")
+
+        # Create completion marker file
+        if downloaded_files:  # Only if we actually downloaded something
+            completion_file = chapter_dir / "completed"
+            try:
+                completion_file.touch()
+                print(f"✅ Completion marker created: {completion_file}")
+            except Exception as e:
+                print(f"⚠️ Could not create completion marker: {e}")
+
+        return downloaded_files
+
+    async def download_chapter_range(self, base_pattern_template: str, start_chapter: int, end_chapter: int, series_info: dict = None) -> Dict[int, List[str]]:
+        """
+        Download a range of chapters. Returns dict of {chapter_num: [file_paths]}.
+        base_pattern_template should have {chapter} placeholder, e.g. 'https://manga.pics/series/chapter-{chapter}/'
+        """
+        print(f"🚀 Downloading chapters {start_chapter}-{end_chapter}")
+
+        if not series_info:
+            series_info = {'series': 'Unknown', 'chapter': str(start_chapter)}
+
+        results = {}
+
+        # Download each chapter
+        for chapter_num in range(start_chapter, end_chapter + 1):
+            print(f"\n📖 Starting Chapter {chapter_num}...")
+
+            # Create chapter-specific info
+            chapter_info = series_info.copy()
+            chapter_info['chapter'] = str(chapter_num)
+
+            # Generate pattern for this chapter
+            chapter_pattern = base_pattern_template.format(chapter=chapter_num)
+
+            try:
+                # Download this chapter
+                downloaded_files = await self.find_all_images(chapter_pattern, 0, chapter_info)
+                results[chapter_num] = downloaded_files
+
+                if downloaded_files:
+                    print(f"✅ Chapter {chapter_num}: {len(downloaded_files)} pages downloaded")
+                else:
+                    print(f"❌ Chapter {chapter_num}: No images found")
+
+            except Exception as e:
+                print(f"❌ Chapter {chapter_num}: Error - {e}")
+                results[chapter_num] = []
+
+        return results
+
+    async def auto_download_next_chapters(self, current_series: str, max_available_chapter: int, ahead_count: int = 3) -> Dict[int, bool]:
+        """
+        Auto-download the next N chapters ahead of the highest available chapter.
+        Returns dict of {chapter_num: success_status}.
+        """
+        print(f"🔄 Auto-downloading {ahead_count} chapters ahead of highest available Chapter {max_available_chapter}")
+
+        # Extract series info for pattern generation
+        from pattern_finder import PatternFinder
+        finder = PatternFinder()
+
+        results = {}
+
+        # Start downloading from the next chapter after the highest available
+        for i in range(1, ahead_count + 1):
+            next_chapter = max_available_chapter + i
+
+            # Check if chapter already exists and is complete
+            chapter_dir = self.output_dir / current_series / f"chapter_{next_chapter}"
+            completion_marker = chapter_dir / "completed"
+
+            if completion_marker.exists():
+                print(f"✅ Chapter {next_chapter} already downloaded")
+                results[next_chapter] = True
+                continue
+
+            print(f"📥 Downloading Chapter {next_chapter}...")
+
+            try:
+                # Try to detect the correct URL pattern for this series
+                base_pattern = await self.detect_series_pattern(current_series, next_chapter)
+
+                if not base_pattern:
+                    # Fallback to standard manga.pics pattern
+                    series_slug = current_series.lower().replace('_', '-').replace(' ', '-')
+                    base_pattern = f"https://manga.pics/{series_slug}/chapter-{next_chapter}/"
+                    print(f"🔍 Using fallback pattern: {base_pattern}")
+
+                chapter_info = {
+                    'series': current_series,
+                    'chapter': str(next_chapter)
+                }
+
+                # Download the chapter
+                downloaded_files = await self.find_all_images(base_pattern, 0, chapter_info)
+
+                if downloaded_files:
+                    print(f"✅ Chapter {next_chapter}: {len(downloaded_files)} pages downloaded")
+                    results[next_chapter] = True
+                else:
+                    print(f"❌ Chapter {next_chapter}: No images found (might not exist yet)")
+                    results[next_chapter] = False
+
+            except Exception as e:
+                print(f"❌ Chapter {next_chapter}: Error - {e}")
+                results[next_chapter] = False
+
+        return results
+
+    async def detect_series_pattern(self, series_name: str, chapter_num: int) -> str:
+        """
+        Try to detect the correct URL pattern for a series by examining existing chapters.
+        Returns the base pattern URL or None if detection fails.
+        """
+        try:
+            # Look for an existing chapter to extract the pattern
+            for existing_chapter in range(1, chapter_num):
+                chapter_dir = self.output_dir / series_name / f"chapter_{existing_chapter}"
+                if chapter_dir.exists():
+                    # Try to find pattern from existing downloads or use PatternFinder
+                    from pattern_finder import PatternFinder
+                    finder = PatternFinder()
+
+                    # Generate likely RavenScans URL for this series/chapter
+                    series_slug = series_name.lower().replace('_', '-').replace(' ', '-')
+                    raven_url = f"https://ravenscans.com/{series_slug}-chapter-{chapter_num}/"
+
+                    try:
+                        # Try to extract pattern
+                        result = finder.find_pattern(raven_url)
+                        if result and result.get('base_pattern'):
+                            pattern = result['base_pattern']
+                            print(f"🔍 Detected pattern from RavenScans: {pattern}")
+                            return pattern
+                    except Exception as e:
+                        print(f"⚠️ Pattern detection failed: {e}")
+
+                    break
+
+        except Exception as e:
+            print(f"⚠️ Error in pattern detection: {e}")
+
+        return None
+
+    def get_chapter_status(self, series_name: str, chapter_num: int) -> Dict[str, any]:
+        """Check if a chapter exists and is complete."""
+        chapter_dir = self.output_dir / series_name / f"chapter_{chapter_num}"
+        completion_marker = chapter_dir / "completed"
+
+        if not chapter_dir.exists():
+            return {"exists": False, "complete": False, "page_count": 0}
+
+        # Count pages
+        image_files = []
+        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+
+        for file_path in chapter_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                image_files.append(file_path.name)
+
+        return {
+            "exists": True,
+            "complete": completion_marker.exists(),
+            "page_count": len(image_files)
+        }
+
+
+def main():
+    """Test the async downloader."""
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python async_downloader.py <base_pattern> [start_number]")
+        print("Example: python async_downloader.py https://manga.pics/call-of-the-spear/chapter-1/ 0")
+        return
+
+    base_pattern = sys.argv[1]
+    start_number = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+
+    chapter_info = {
+        'series': 'Test Series',
+        'chapter': '1'
+    }
+
+    async def run_download():
+        downloader = AsyncDownloader(max_concurrent=30)
+        files = await downloader.find_all_images(base_pattern, start_number, chapter_info)
+        print(f"\nDownloaded files:")
+        for i, filepath in enumerate(files, 1):
+            filename = filepath.split('/')[-1]
+            print(f"  {i:2d}. {filename}")
+
+    asyncio.run(run_download())
+
+
+if __name__ == "__main__":
+    main()

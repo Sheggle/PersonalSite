@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RipRaven - Comic Reader | sheggle</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      /* Custom styles for iframe page */
+      .iframe-container {
+        width: 100%;
+        height: calc(100vh - 8rem);
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #0d1117;
+      }
+      .ripraven-iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+        background: white;
+      }
+      .header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+      }
+      .nav-back a {
+        background: #21262d;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        border: 1px solid #30363d;
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      .nav-back a:hover {
+        background: #30363d;
+        text-decoration: none;
+      }
+      .page-title {
+        font-size: 2.7rem;
+        margin: 0;
+        color: #e6edf3;
+        font-weight: normal;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap" style="max-width: 100%; margin: 2rem auto;">
+      <div class="header-row">
+        <div class="nav-back">
+          <a href="/">← Back to Home</a>
+        </div>
+        <div class="page-title">📚 RipRaven Comic Reader</div>
+      </div>
+
+      <div class="iframe-container">
+        <iframe
+          src="http://localhost:8000/api/ripraven/"
+          class="ripraven-iframe"
+          title="RipRaven Comic Reader"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen>
+          <p>Your browser doesn't support iframes. Please <a href="http://localhost:8000/api/ripraven/" target="_blank">open RipRaven in a new tab</a>.</p>
+        </iframe>
+      </div>
+
+      <div style="margin-top: 1rem; font-size: 0.9rem; color: #7d8590;">
+        <p>💡 <strong>Tips:</strong></p>
+        <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
+          <li>Paste RavenScans or manga.pics URLs to download comics</li>
+          <li>Use keyboard shortcuts: ↑↓ or j/k to scroll, spacebar for page down</li>
+          <li>All downloads are saved locally and can be read offline</li>
+        </ul>
+      </div>
+    </main>
+  </body>
+</html>

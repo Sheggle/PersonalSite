@@ -1,0 +1,2 @@
+# This file ensures the ripraven data directory structure exists
+# Downloads and reading history will be created here but ignored by git

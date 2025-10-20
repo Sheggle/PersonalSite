@@ -6,6 +6,10 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    "requests",
+    "aiohttp",
+    "aiofiles",
+    "pillow",
 ]
 
 [tool.uv]
