@@ -1325,6 +1325,22 @@ class ComicWebServer:
                                 this.currentDisplayChapter = chapterNum;
                                 this.chapterIndicator.textContent = `Chapter ${chapterNum}`;
                                 console.log('[INTERSECT] Chapter indicator now shows:', this.chapterIndicator.textContent);
+
+                                // Advance polling window to follow the active chapter
+                                if (this.currentStartChapter === undefined || this.currentStartChapter === null) {
+                                    this.currentStartChapter = chapterNum;
+                                } else {
+                                    this.currentStartChapter = Math.max(this.currentStartChapter, chapterNum);
+                                }
+
+                                // Save recent chapter position
+                                this.saveRecentChapter();
+
+                                // If we're near the currently loaded frontier, opportunistically pull more
+                                if (this.maxLoadedChapter !== null && chapterNum >= this.maxLoadedChapter - 1) {
+                                    console.log('[INTERSECT] Near frontier, triggering content check');
+                                    this.checkForNewContent();
+                                }
                             } else if (chapterNum === this.currentDisplayChapter) {
                                 console.log('[INTERSECT] Chapter', chapterNum, 'already current, no update needed');
                             } else {
@@ -1496,6 +1512,8 @@ class ComicWebServer:
                 this.comicContainer.innerHTML = '';
                 this.chapterBoundaries = []; // Keep for backward compatibility
 
+                let highestChapterInBatch = this.maxLoadedChapter || 0;
+
                 chaptersData.forEach((chapter, chapterIndex) => {
                     // Add chapter divider (except for first chapter)
                     if (chapterIndex > 0) {
@@ -1530,7 +1548,12 @@ class ComicWebServer:
 
                     // Observe this chapter for scroll tracking
                     this.chapterObserver.observe(chapterContainer);
+
+                    highestChapterInBatch = Math.max(highestChapterInBatch, chapter.chapter_num);
                 });
+
+                this.maxLoadedChapter = highestChapterInBatch;
+                console.log('[INIT] Max loaded chapter set to:', this.maxLoadedChapter);
 
                 // Set initial chapter indicator
                 console.log('[INIT] chaptersData:', chaptersData);
@@ -1610,13 +1633,12 @@ class ComicWebServer:
                     if (response.ok) {
                         const newData = await response.json();
 
-                        // Compare with current content
-                        const currentChapterCount = this.comicContainer.querySelectorAll('.chapter-container').length;
-                        const newChapterCount = newData.chapters.length;
+                        const currentMax = this.maxLoadedChapter || 0;
+                        const chaptersToAppend = newData.chapters.filter(ch => ch.chapter_num > currentMax);
 
-                        if (newChapterCount > currentChapterCount) {
-                            console.log(`🔄 Found ${newChapterCount - currentChapterCount} new chapters, injecting content...`);
-                            await this.injectNewChapters(newData.chapters.slice(currentChapterCount));
+                        if (chaptersToAppend.length > 0) {
+                            console.log(`🔄 Found ${chaptersToAppend.length} new chapters beyond current max (${currentMax}), injecting...`);
+                            await this.injectNewChapters(chaptersToAppend);
                         }
                     }
                 } catch (error) {
@@ -1625,9 +1647,14 @@ class ComicWebServer:
             }
 
             async injectNewChapters(newChapters) {
+                if (!Array.isArray(newChapters) || newChapters.length === 0) {
+                    console.log('[INJECT] No new chapters supplied, skipping');
+                    return;
+                }
+
                 const currentScrollY = window.scrollY;
 
-                newChapters.forEach((chapter, chapterIndex) => {
+                newChapters.forEach((chapter) => {
                     // Add chapter divider
                     const divider = document.createElement('div');
                     divider.className = 'chapter-divider';
@@ -1661,10 +1688,19 @@ class ComicWebServer:
                     this.chapterObserver.observe(chapterContainer);
                 });
 
+                // Track newly appended data
+                this.chaptersData = this.chaptersData.concat(newChapters);
+                const newestChapterNumber = newChapters.reduce((max, ch) => Math.max(max, ch.chapter_num), this.maxLoadedChapter || 0);
+                this.maxLoadedChapter = Math.max(this.maxLoadedChapter || 0, newestChapterNumber);
+                console.log('[INJECT] Updated maxLoadedChapter to', this.maxLoadedChapter);
+
                 // Maintain scroll position
                 window.scrollTo(0, currentScrollY);
 
                 console.log(`✅ Injected ${newChapters.length} new chapters seamlessly`);
+
+                // Refresh boundaries after DOM grows
+                setTimeout(() => this.updateChapterBoundaries(), 500);
             }
 
             updateChapterIndicator() {
