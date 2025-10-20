@@ -1233,6 +1233,7 @@ class ComicWebServer:
                 const mountMatch = rawPath.match(/^(.*?\/api\/ripraven)(?:\/.*)?$/);
                 const basePath = mountMatch ? mountMatch[1] : '';
                 this.apiBase = `${basePath}/api`.replace(/\/{2,}/g, '/');
+                window.__ripravenApiBase = this.apiBase;
                 console.info('[RipRaven] API base resolved:', {
                     pathname: window.location.pathname,
                     rawPath,
@@ -1794,8 +1795,10 @@ class ComicWebServer:
             importStatus.textContent = 'Extracting manga information...';
             importStatus.style.color = '#cccccc';
 
+            const apiBase = window.__ripravenApiBase || '/api/ripraven/api';
+
             try {
-                const response = await fetch(`${this.apiBase}/import-manga`, {
+                const response = await fetch(`${apiBase}/import-manga`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
