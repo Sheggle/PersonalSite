@@ -852,19 +852,176 @@ class ComicWebServer:
         }
 
         @media (max-width: 768px) {
+            /* Mobile layout for controls */
             .controls {
                 flex-direction: column;
                 align-items: stretch;
+                gap: 0.75rem;
             }
 
             .control-group {
                 flex-direction: column;
                 align-items: stretch;
+                gap: 0.5rem;
             }
 
             select {
                 min-width: unset;
                 width: 100%;
+                padding: 0.75rem;
+                font-size: 1rem;
+            }
+
+            /* Optimize header for mobile */
+            .header {
+                padding: 0.75rem;
+                gap: 0.75rem;
+            }
+
+            .header h1 {
+                font-size: 1.3rem;
+                margin-bottom: 0.75rem;
+            }
+
+            .header-toggle {
+                padding: 0.6rem 0.8rem;
+                font-size: 0.9rem;
+                min-width: 100px;
+            }
+
+            /* Mobile-friendly comic container */
+            .comic-container {
+                margin: 1rem auto;
+                padding: 0 0.5rem;
+            }
+
+            /* Improve comic page display on mobile */
+            .comic-page img {
+                max-width: 100%;
+                height: auto;
+                border-radius: 4px;
+            }
+
+            /* Mobile chapter indicator */
+            .chapter-indicator {
+                font-size: 1rem;
+                padding: 0.6rem 1rem;
+                border-radius: 6px;
+                top: 10px;
+                right: 10px;
+                /* Ensure it doesn't interfere with mobile browser UI */
+                z-index: 200;
+            }
+
+            /* Optimize import section for mobile */
+            .import-section {
+                padding: 0.75rem;
+                margin-top: 0.75rem;
+            }
+
+            .import-section input[type="url"] {
+                padding: 0.75rem;
+                font-size: 1rem;
+                border-radius: 6px;
+            }
+
+            .import-section button {
+                padding: 0.75rem 1rem;
+                font-size: 1rem;
+                border-radius: 6px;
+            }
+
+            /* Mobile navigation improvements */
+            button, input[type="button"] {
+                min-height: 44px; /* Touch-friendly size */
+                font-size: 1rem;
+            }
+
+            /* Download status on mobile */
+            .download-status {
+                max-width: 90%;
+                margin: 0.5rem;
+                font-size: 0.9rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            /* Extra small screens */
+            .header {
+                padding: 0.5rem;
+            }
+
+            .header h1 {
+                font-size: 1.1rem;
+                margin-bottom: 0.5rem;
+            }
+
+            .header-toggle {
+                padding: 0.5rem 0.7rem;
+                font-size: 0.85rem;
+                min-width: 80px;
+            }
+
+            .comic-container {
+                margin: 0.5rem auto;
+                padding: 0 0.25rem;
+            }
+
+            .chapter-indicator {
+                font-size: 0.9rem;
+                padding: 0.5rem 0.8rem;
+                top: 8px;
+                right: 8px;
+            }
+
+            /* Compact controls for very small screens */
+            .controls {
+                gap: 0.5rem;
+            }
+
+            .control-group {
+                gap: 0.3rem;
+            }
+
+            select, input {
+                padding: 0.6rem;
+                font-size: 0.9rem;
+            }
+
+            /* Chapter dividers on mobile */
+            .chapter-divider {
+                margin: 1rem 0 0.5rem;
+                font-size: 1rem;
+            }
+
+            .import-section {
+                padding: 0.5rem;
+                margin-top: 0.5rem;
+            }
+        }
+
+        @media (max-width: 320px) {
+            /* Very small screens */
+            .header h1 {
+                font-size: 1rem;
+            }
+
+            .header-toggle {
+                font-size: 0.8rem;
+                padding: 0.4rem 0.6rem;
+                min-width: 70px;
+            }
+
+            .chapter-indicator {
+                font-size: 0.8rem;
+                padding: 0.4rem 0.6rem;
+                top: 5px;
+                right: 5px;
+            }
+
+            select, input {
+                padding: 0.5rem;
+                font-size: 0.85rem;
             }
         }
 

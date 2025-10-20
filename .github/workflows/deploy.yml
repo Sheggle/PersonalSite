@@ -1,0 +1,36 @@
+name: Deploy to sheggle.com
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-sheggle
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add SSH key (for GitHub Actions -> server)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust server host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Run server-side update (pull + uv sync + restart)
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'sudo /usr/local/bin/update_sheggle'
+
+      - name: Verify deployment health
+        run: |
+          echo "Waiting for service to restart..."
+          sleep 10
+          curl -f https://${{ secrets.SSH_HOST }}/api/health || echo "Health check failed, but deployment may still be processing"

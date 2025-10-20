@@ -26,6 +26,8 @@
         align-items: center;
         justify-content: space-between;
         margin-bottom: 1rem;
+        gap: 1rem;
+        flex-wrap: wrap;
       }
       .nav-back a {
         background: #21262d;
@@ -34,6 +36,7 @@
         border: 1px solid #30363d;
         text-decoration: none;
         font-size: 0.9rem;
+        white-space: nowrap;
       }
       .nav-back a:hover {
         background: #30363d;
@@ -44,6 +47,106 @@
         margin: 0;
         color: #e6edf3;
         font-weight: normal;
+      }
+      .tips-section {
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        color: #7d8590;
+      }
+      .tips-section ul {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+      }
+
+      /* Mobile Responsive Styles */
+      @media (max-width: 768px) {
+        /* Reduce main container margin on mobile */
+        .wrap {
+          margin: 1rem auto !important;
+          padding: 0 0.75rem !important;
+        }
+
+        /* Stack header elements vertically on small screens */
+        .header-row {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 0.75rem;
+          margin-bottom: 0.75rem;
+        }
+
+        /* Scale down title for mobile */
+        .page-title {
+          font-size: 1.8rem;
+          text-align: center;
+          order: -1; /* Put title first on mobile */
+        }
+
+        /* Make back button full width on mobile */
+        .nav-back {
+          order: 1;
+        }
+        .nav-back a {
+          display: block;
+          text-align: center;
+          padding: 0.75rem 1rem;
+          font-size: 1rem;
+        }
+
+        /* Adjust iframe container for mobile browsers */
+        .iframe-container {
+          height: calc(100vh - 6rem);
+          border-radius: 6px;
+        }
+
+        /* Optimize tips section for mobile */
+        .tips-section {
+          font-size: 0.85rem;
+          margin-top: 0.75rem;
+        }
+        .tips-section ul {
+          padding-left: 1.25rem;
+        }
+        .tips-section li {
+          margin-bottom: 0.25rem;
+        }
+      }
+
+      @media (max-width: 480px) {
+        /* Extra small screens */
+        .wrap {
+          margin: 0.5rem auto !important;
+          padding: 0 0.5rem !important;
+        }
+
+        .page-title {
+          font-size: 1.5rem;
+        }
+
+        .nav-back a {
+          font-size: 0.9rem;
+          padding: 0.6rem 0.8rem;
+        }
+
+        /* Even more compact iframe on very small screens */
+        .iframe-container {
+          height: calc(100vh - 5rem);
+          border-radius: 4px;
+        }
+
+        .tips-section {
+          font-size: 0.8rem;
+        }
+      }
+
+      @media (max-width: 320px) {
+        /* Very small screens like older phones */
+        .page-title {
+          font-size: 1.3rem;
+        }
+
+        .iframe-container {
+          height: calc(100vh - 4.5rem);
+        }
       }
     </style>
   </head>
@@ -67,9 +170,9 @@
         </iframe>
       </div>
 
-      <div style="margin-top: 1rem; font-size: 0.9rem; color: #7d8590;">
+      <div class="tips-section">
         <p>💡 <strong>Tips:</strong></p>
-        <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
+        <ul>
           <li>Paste RavenScans or manga.pics URLs to download comics</li>
           <li>Use keyboard shortcuts: ↑↓ or j/k to scroll, spacebar for page down</li>
           <li>All downloads are saved locally and can be read offline</li>
