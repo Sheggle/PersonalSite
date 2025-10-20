@@ -7,20 +7,24 @@ Extracts comic panels and combines them into a single scrollable image.
 import os
 import re
 import time
-import requests
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse
-from pathlib import Path
 
+import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
+
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class RavenScraper:
@@ -69,7 +73,7 @@ class RavenScraper:
 
     def get_comic_images_selenium(self, url: str) -> List[str]:
         """Extract comic image URLs using Selenium to handle dynamic content and lazy loading."""
-        print(f"Loading page: {url}")
+        logger.info("Loading page: %s", url)
         driver = self.setup_driver()
 
         try:
@@ -81,7 +85,7 @@ class RavenScraper:
             # Wait for page to load initially
             time.sleep(3)
 
-            print("Scrolling through page to trigger lazy loading...")
+            logger.info("Scrolling through page to trigger lazy loading...")
 
             # Scroll to trigger lazy loading
             last_height = driver.execute_script("return document.body.scrollHeight")
@@ -104,7 +108,7 @@ class RavenScraper:
             time.sleep(1)
 
             # Now scroll more slowly to ensure all images are loaded
-            print("Performing slow scroll to ensure all images are loaded...")
+            logger.info("Performing slow scroll to ensure all images are loaded...")
             viewport_height = driver.execute_script("return window.innerHeight")
             total_height = driver.execute_script("return document.body.scrollHeight")
 
@@ -118,7 +122,7 @@ class RavenScraper:
             driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(1)
 
-            print("Searching for images...")
+            logger.info("Searching for images...")
 
             # Look for common comic image containers with expanded selectors
             selectors = [
@@ -150,7 +154,7 @@ class RavenScraper:
             for selector in selectors:
                 try:
                     elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                    print(f"Selector '{selector}' found {len(elements)} elements")
+                    logger.info("Selector '%s' found %d elements", selector, len(elements))
                     for element in elements:
                         # Try to get the image URL from various attributes
                         img_url = (element.get_attribute('src') or
@@ -165,9 +169,9 @@ class RavenScraper:
 
             # If still no images found, try to find all images and filter them
             if not image_urls:
-                print("No images found with specific selectors, searching all images...")
+                logger.warning("No images found with specific selectors, searching all images...")
                 all_images = driver.find_elements(By.TAG_NAME, 'img')
-                print(f"Found {len(all_images)} total img elements")
+                logger.info("Found %d total img elements", len(all_images))
 
                 for img in all_images:
                     img_url = (img.get_attribute('src') or
@@ -191,13 +195,13 @@ class RavenScraper:
                     seen.add(url)
                     unique_urls.append(url)
 
-            print(f"Found {len(unique_urls)} comic images")
+            logger.info("Found %d comic images", len(unique_urls))
 
             # Print first few URLs for debugging
             if unique_urls:
-                print("Sample image URLs:")
+                logger.info("Sample image URLs:")
                 for i, url in enumerate(unique_urls[:3]):
-                    print(f"  {i+1}: {url}")
+                    logger.info("  %d: %s", i + 1, url)
 
             return unique_urls
 
@@ -232,7 +236,7 @@ class RavenScraper:
     def download_image(self, url: str, filename: str) -> Optional[str]:
         """Download an image from URL."""
         try:
-            print(f"Downloading: {filename}")
+            logger.info("Downloading: %s", filename)
             response = self.session.get(url, timeout=30)
             response.raise_for_status()
 
@@ -242,7 +246,7 @@ class RavenScraper:
 
             return str(filepath)
         except Exception as e:
-            print(f"Failed to download {url}: {e}")
+            logger.error("Failed to download %s: %s", url, e)
             return None
 
     def download_all_images(self, image_urls: List[str], chapter_info: dict) -> List[str]:
@@ -273,7 +277,7 @@ class RavenScraper:
         if not image_paths:
             raise ValueError("No images to combine")
 
-        print(f"Combining {len(image_paths)} images...")
+        logger.info("Combining %d images...", len(image_paths))
 
         # Load all images and calculate total dimensions
         images = []
@@ -287,7 +291,7 @@ class RavenScraper:
                 total_height += img.height
                 max_width = max(max_width, img.width)
             except Exception as e:
-                print(f"Failed to load image {path}: {e}")
+                logger.warning("Failed to load image %s: %s", path, e)
                 continue
 
         if not images:
@@ -311,18 +315,18 @@ class RavenScraper:
         # Optimize for file size while maintaining quality
         combined.save(output_path, 'JPEG', quality=85, optimize=True)
 
-        print(f"Combined image saved: {output_path}")
-        print(f"Final dimensions: {max_width}x{total_height}")
+        logger.info("Combined image saved: %s", output_path)
+        logger.info("Final dimensions: %dx%d", max_width, total_height)
 
         return str(output_path)
 
     def scrape_chapter(self, url: str) -> str:
         """Main method to scrape a complete chapter."""
-        print(f"Starting to scrape: {url}")
+        logger.info("Starting to scrape: %s", url)
 
         # Extract chapter information
         chapter_info = self.extract_chapter_info(url)
-        print(f"Chapter info: {chapter_info}")
+        logger.info("Chapter info: %s", chapter_info)
 
         # Get comic image URLs
         image_urls = self.get_comic_images_selenium(url)
@@ -336,7 +340,7 @@ class RavenScraper:
         if not downloaded_files:
             raise ValueError("Failed to download any images")
 
-        print(f"Successfully downloaded {len(downloaded_files)} images")
+        logger.info("Successfully downloaded %d images", len(downloaded_files))
 
         # Combine images
         combined_path = self.combine_images(downloaded_files, chapter_info)
@@ -349,7 +353,7 @@ class RavenScraper:
                     os.remove(filepath)
                 except:
                     pass
-            print("Individual files cleaned up")
+            logger.info("Individual files cleaned up")
 
         return combined_path
 
@@ -357,8 +361,8 @@ class RavenScraper:
 def main():
     """Main function to run the scraper."""
     if len(os.sys.argv) < 2:
-        print("Usage: python comic_scraper.py <ravenscans_url>")
-        print("Example: python comic_scraper.py https://ravenscans.com/call-of-the-spear-chapter-1/")
+        logger.error("Usage: python comic_scraper.py <ravenscans_url>")
+        logger.info("Example: python comic_scraper.py https://ravenscans.com/call-of-the-spear-chapter-1/")
         return
 
     url = os.sys.argv[1]
@@ -366,10 +370,10 @@ def main():
     try:
         scraper = RavenScraper()
         result_path = scraper.scrape_chapter(url)
-        print(f"\n✅ Success! Combined comic saved to: {result_path}")
+        logger.info("✅ Success! Combined comic saved to: %s", result_path)
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        logger.exception("❌ Error while scraping chapter")
         return 1
 
     return 0

@@ -9,13 +9,17 @@ import os
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
+
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class ChapterInfo(BaseModel):
@@ -150,7 +154,7 @@ class ComicWebServer:
         @self.app.post("/api/import-manga", response_model=ImportMangaResponse)
         async def import_manga(request: ImportMangaRequest):
             """Import a new manga from a RavenScans URL."""
-            print(f"📥 [DEBUG] Import manga request: {request.url}")
+            logger.debug("📥 Import manga request: %s", request.url)
 
             try:
                 # Extract manga information from the URL
@@ -170,7 +174,12 @@ class ComicWebServer:
                 if not base_pattern:
                     raise HTTPException(status_code=400, detail="Could not extract download pattern from URL")
 
-                print(f"📥 [DEBUG] Extracted: series={series_name}, chapter={chapter_num}, pattern={base_pattern}")
+                logger.debug(
+                    "📥 Extracted: series=%s, chapter=%s, pattern=%s",
+                    series_name,
+                    chapter_num,
+                    base_pattern,
+                )
 
                 # Clean up series name for folder structure
                 series_clean = series_name.replace(' ', '_').replace('-', '_')
@@ -201,13 +210,17 @@ class ComicWebServer:
             except HTTPException:
                 raise
             except Exception as e:
-                print(f"❌ [DEBUG] Import error: {e}")
+                logger.exception("❌ Import error")
                 raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
         @self.app.get("/api/infinite-chapters/{series_name}/{starting_chapter}", response_model=InfiniteChaptersResponse)
         async def get_infinite_chapters(series_name: str, starting_chapter: int, background_tasks: BackgroundTasks):
             """Get multiple chapters for infinite scroll reading with auto-download."""
-            print(f"🔍 [DEBUG] Starting infinite chapters request: series={series_name}, chapter={starting_chapter}")
+            logger.debug(
+                "🔍 Starting infinite chapters request: series=%s, chapter=%d",
+                series_name,
+                starting_chapter,
+            )
 
             try:
                 # Get the main chapter and up to 2 additional chapters
@@ -215,23 +228,23 @@ class ComicWebServer:
                 total_pages = 0
                 download_status = {}
 
-                print(f"🔍 [DEBUG] Checking downloader availability...")
+                logger.debug("🔍 Checking downloader availability...")
                 if not hasattr(self, 'downloader'):
-                    print(f"❌ [DEBUG] Downloader not initialized!")
+                    logger.error("❌ Downloader not initialized!")
                     raise HTTPException(status_code=500, detail="Downloader not initialized")
 
-                print(f"🔍 [DEBUG] Downloader available, checking chapters...")
+                logger.debug("🔍 Downloader available, checking chapters...")
 
                 # Check which chapters are available (current + next 3)
                 for i in range(4):  # chapters 0, 1, 2, 3 relative to starting
                     chapter_num = starting_chapter + i
-                    print(f"🔍 [DEBUG] Checking chapter {chapter_num}...")
+                    logger.debug("🔍 Checking chapter %d...", chapter_num)
 
                     try:
                         chapter_status = self.downloader.get_chapter_status(series_name, chapter_num)
-                        print(f"🔍 [DEBUG] Chapter {chapter_num} status: {chapter_status}")
+                        logger.debug("🔍 Chapter %d status: %s", chapter_num, chapter_status)
                     except Exception as e:
-                        print(f"❌ [DEBUG] Error getting chapter status for {chapter_num}: {e}")
+                        logger.exception("❌ Error getting chapter status for %d", chapter_num)
                         download_status[f"chapter_{chapter_num}"] = "error"
                         continue
 
@@ -239,9 +252,9 @@ class ComicWebServer:
                         # Get images for this chapter
                         try:
                             chapter_name = f"chapter_{chapter_num}"
-                            print(f"🔍 [DEBUG] Loading images for {series_name}/{chapter_name}...")
+                            logger.debug("🔍 Loading images for %s/%s...", series_name, chapter_name)
                             images = self.get_chapter_images(series_name, chapter_name)
-                            print(f"🔍 [DEBUG] Found {len(images)} images for chapter {chapter_num}")
+                            logger.debug("🔍 Found %d images for chapter %d", len(images), chapter_num)
 
                             chapters_data.append(InfiniteChapterData(
                                 chapter_num=chapter_num,
@@ -255,16 +268,13 @@ class ComicWebServer:
                             download_status[f"chapter_{chapter_num}"] = "complete" if chapter_status["complete"] else "incomplete"
 
                         except Exception as e:
-                            print(f"❌ [DEBUG] Error loading chapter {chapter_num}: {e}")
-                            print(f"❌ [DEBUG] Full error details: {type(e).__name__}: {str(e)}")
-                            import traceback
-                            print(f"❌ [DEBUG] Traceback: {traceback.format_exc()}")
+                            logger.exception("❌ Error loading chapter %d", chapter_num)
                             download_status[f"chapter_{chapter_num}"] = "error"
                     else:
-                        print(f"🔍 [DEBUG] Chapter {chapter_num} does not exist")
+                        logger.debug("🔍 Chapter %d does not exist", chapter_num)
                         download_status[f"chapter_{chapter_num}"] = "not_available"
 
-                print(f"🔍 [DEBUG] Found {len(chapters_data)} chapters, checking if more downloads needed...")
+                logger.debug("🔍 Found %d chapters, checking if more downloads needed...", len(chapters_data))
 
                 # Sliding window logic: Always ensure we have 3 chapters ahead of the highest available
                 # Find the highest chapter number we have
@@ -279,9 +289,9 @@ class ComicWebServer:
                     if not chapter_exists:
                         missing_chapters.append(target_chapter)
 
-                print(f"🔍 [DEBUG] Max available chapter: {max_available_chapter}")
-                print(f"🔍 [DEBUG] Target chapters: {target_chapters}")
-                print(f"🔍 [DEBUG] Missing chapters: {missing_chapters}")
+                logger.debug("🔍 Max available chapter: %s", max_available_chapter)
+                logger.debug("🔍 Target chapters: %s", target_chapters)
+                logger.debug("🔍 Missing chapters: %s", missing_chapters)
 
                 # Always trigger background download if we have missing chapters
                 if missing_chapters:
@@ -292,13 +302,16 @@ class ComicWebServer:
                             series_name,
                             max_available_chapter
                         )
-                        print(f"🔍 [DEBUG] Background download task added for chapters beyond {max_available_chapter}")
+                        logger.debug(
+                            "🔍 Background download task added for chapters beyond %s",
+                            max_available_chapter,
+                        )
                     except Exception as e:
-                        print(f"❌ [DEBUG] Error adding background task: {e}")
+                        logger.exception("❌ Error adding background task")
                 else:
-                    print(f"🔍 [DEBUG] No missing chapters, no download needed")
+                    logger.debug("🔍 No missing chapters, no download needed")
 
-                print(f"🔍 [DEBUG] Creating response...")
+                logger.debug("🔍 Creating response...")
                 response = InfiniteChaptersResponse(
                     series=series_name,
                     starting_chapter=starting_chapter,
@@ -306,15 +319,16 @@ class ComicWebServer:
                     total_pages=total_pages,
                     download_status=download_status
                 )
-                print(f"✅ [DEBUG] Response created successfully with {len(chapters_data)} chapters")
+                logger.debug(
+                    "✅ Response created successfully with %d chapters",
+                    len(chapters_data),
+                )
                 return response
 
             except HTTPException:
                 raise
             except Exception as e:
-                print(f"❌ [DEBUG] Unexpected error in infinite chapters: {type(e).__name__}: {str(e)}")
-                import traceback
-                print(f"❌ [DEBUG] Full traceback: {traceback.format_exc()}")
+                logger.exception("❌ Unexpected error in infinite chapters")
                 raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
         @self.app.get("/api/download-status/{series_name}")
@@ -352,7 +366,11 @@ class ComicWebServer:
     ):
         """Background task responsible for downloading an imported manga chapter."""
         try:
-            print(f"🔄 [DEBUG] Starting background download for imported manga: {series_name} Chapter {chapter_num}")
+            logger.debug(
+                "🔄 Starting background download for imported manga: %s Chapter %d",
+                series_name,
+                chapter_num,
+            )
 
             # Ensure downloader exists and is fresh for the current loop
             if not hasattr(self, 'downloader'):
@@ -367,12 +385,21 @@ class ComicWebServer:
             downloaded_files = await self.downloader.find_all_images(base_pattern, start_num, chapter_info)
 
             if downloaded_files:
-                print(f"✅ [DEBUG] Successfully imported {series_name} Chapter {chapter_num}: {len(downloaded_files)} pages")
+                logger.info(
+                    "✅ Successfully imported %s Chapter %d: %d pages",
+                    series_name,
+                    chapter_num,
+                    len(downloaded_files),
+                )
             else:
-                print(f"❌ [DEBUG] No images found for {series_name} Chapter {chapter_num}")
+                logger.warning(
+                    "❌ No images found for %s Chapter %d",
+                    series_name,
+                    chapter_num,
+                )
 
         except Exception as e:
-            print(f"❌ [DEBUG] Background download error for {series_name}: {e}")
+            logger.exception("❌ Background download error for %s", series_name)
 
     def scan_series(self) -> List[SeriesInfo]:
         """Scan downloads directory for available series."""
@@ -504,12 +531,17 @@ class ComicWebServer:
             with open(self.recent_file, 'w') as f:
                 json.dump([r.dict() for r in recent_chapters], f, indent=2)
         except Exception as e:
-            print(f"Error saving recent chapters: {e}")
+            logger.error("Error saving recent chapters: %s", e)
 
     async def trigger_background_download(self, series_name: str, starting_chapter: int):
         """Trigger background download of next chapters."""
         try:
-            print(f"🔄 Starting background download for {series_name} chapters {starting_chapter+1}-{starting_chapter+3}")
+            logger.info(
+                "🔄 Starting background download for %s chapters %d-%d",
+                series_name,
+                starting_chapter + 1,
+                starting_chapter + 3,
+            )
 
             # Update download status
             for i in range(1, 4):  # chapters +1, +2, +3
@@ -551,10 +583,10 @@ class ComicWebServer:
                         message="Chapter not available"
                     )
 
-            print(f"✅ Background download completed for {series_name}")
+            logger.info("✅ Background download completed for %s", series_name)
 
         except Exception as e:
-            print(f"❌ Background download error: {e}")
+            logger.exception("❌ Background download error for %s", series_name)
             # Mark failed chapters
             for i in range(1, 4):
                 chapter_num = starting_chapter + i
@@ -1797,7 +1829,7 @@ class ComicWebServer:
 
     def run(self, auto_open: bool = True):
         """Run the web server."""
-        print(f"🔥 Starting RipRaven Web Comic Reader on http://localhost:{self.port}")
+        logger.info("🔥 Starting RipRaven Web Comic Reader on http://localhost:%d", self.port)
 
         if auto_open:
             # Open browser after a short delay
@@ -1827,9 +1859,9 @@ def main():
 
     if len(sys.argv) > 1:
         if sys.argv[1] in ['-h', '--help']:
-            print("🔥 RipRaven Web Comic Reader")
-            print("Usage: python web_reader.py [downloads_folder] [port]")
-            print("Example: python web_reader.py downloads 8080")
+            logger.info("🔥 RipRaven Web Comic Reader")
+            logger.info("Usage: python web_reader.py [downloads_folder] [port]")
+            logger.info("Example: python web_reader.py downloads 8080")
             return
 
         downloads_dir = sys.argv[1]
@@ -1838,7 +1870,7 @@ def main():
         try:
             port = int(sys.argv[2])
         except ValueError:
-            print("❌ Invalid port number")
+            logger.error("❌ Invalid port number")
             return
 
     server = ComicWebServer(downloads_dir, port)

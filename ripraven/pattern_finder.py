@@ -4,9 +4,14 @@ Pattern Finder - Extract manga.pics URL patterns from RavenScans pages
 """
 
 import re
-import requests
 from typing import Optional, Tuple
 from urllib.parse import urlparse
+
+import requests
+
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class PatternFinder:
@@ -21,7 +26,7 @@ class PatternFinder:
         Extract manga.pics pattern from RavenScans URL.
         Returns (base_pattern, start_number) or None if not found.
         """
-        print(f"🔍 Analyzing RavenScans page: {url}")
+        logger.info("🔍 Analyzing RavenScans page: %s", url)
 
         try:
             response = self.session.get(url, timeout=30)
@@ -43,14 +48,14 @@ class PatternFinder:
                 image_numbers = [int(match[2]) for match in matches]
                 start_number = min(image_numbers)
 
-                print(f"✅ Found pattern: {base_pattern}")
-                print(f"📍 Starting number: {start_number}")
-                print(f"🔢 Found {len(set(image_numbers))} unique image numbers")
+                logger.info("✅ Found pattern: %s", base_pattern)
+                logger.info("📍 Starting number: %d", start_number)
+                logger.info("🔢 Found %d unique image numbers", len(set(image_numbers)))
 
                 return base_pattern, start_number
 
             # If no direct matches, try alternative patterns
-            print("🔍 No direct manga.pics URLs found, trying alternative detection...")
+            logger.info("🔍 No direct manga.pics URLs found, trying alternative detection...")
 
             # Look for any manga.pics references
             alt_pattern = r'manga\.pics/([^/\s"\']+)/([^/\s"\']+)'
@@ -64,22 +69,22 @@ class PatternFinder:
                 start_number = self._detect_start_number(base_pattern)
 
                 if start_number is not None:
-                    print(f"✅ Found alternative pattern: {base_pattern}")
-                    print(f"📍 Detected starting number: {start_number}")
+                    logger.info("✅ Found alternative pattern: %s", base_pattern)
+                    logger.info("📍 Detected starting number: %d", start_number)
                     return base_pattern, start_number
 
-            print("❌ No manga.pics pattern found in the page")
+            logger.warning("❌ No manga.pics pattern found in the page")
             return None
 
         except Exception as e:
-            print(f"❌ Error analyzing page: {e}")
+            logger.exception("❌ Error analyzing page")
             return None
 
     def _detect_start_number(self, base_pattern: str) -> Optional[int]:
         """
         Auto-detect the starting image number by testing common values.
         """
-        print("🔍 Auto-detecting starting number...")
+        logger.info("🔍 Auto-detecting starting number...")
 
         # Test common starting numbers
         test_numbers = [0, 1, 2]
@@ -89,7 +94,7 @@ class PatternFinder:
             try:
                 response = self.session.head(test_url, timeout=10)
                 if response.status_code == 200:
-                    print(f"✅ Found starting number: {num}")
+                    logger.info("✅ Found starting number: %d", num)
                     return num
             except:
                 continue
@@ -100,12 +105,12 @@ class PatternFinder:
             try:
                 response = self.session.head(test_url, timeout=10)
                 if response.status_code == 200:
-                    print(f"✅ Found starting number: {num} (PNG format)")
+                    logger.info("✅ Found starting number: %d (PNG format)", num)
                     return num
             except:
                 continue
 
-        print("⚠️ Could not detect starting number, defaulting to 0")
+        logger.warning("⚠️ Could not detect starting number, defaulting to 0")
         return 0
 
     def extract_chapter_info(self, url: str) -> dict:
@@ -200,10 +205,10 @@ def main():
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python pattern_finder.py <url>")
-        print("Examples:")
-        print("  python pattern_finder.py https://ravenscans.com/call-of-the-spear-chapter-1/")
-        print("  python pattern_finder.py https://manga.pics/call-of-the-spear/chapter-1/5.jpg")
+        logger.error("Usage: python pattern_finder.py <url>")
+        logger.info("Examples:")
+        logger.info("  python pattern_finder.py https://ravenscans.com/call-of-the-spear-chapter-1/")
+        logger.info("  python pattern_finder.py https://manga.pics/call-of-the-spear/chapter-1/5.jpg")
         return
 
     url = sys.argv[1]
@@ -214,19 +219,19 @@ def main():
     elif 'manga.pics' in url:
         result = finder.parse_direct_manga_pics_url(url)
     else:
-        print("❌ Unsupported URL format")
+        logger.error("❌ Unsupported URL format")
         return
 
     if result:
         base_pattern, start_number = result
         chapter_info = finder.extract_chapter_info(url)
 
-        print(f"\n📋 Results:")
-        print(f"  Base Pattern: {base_pattern}")
-        print(f"  Start Number: {start_number}")
-        print(f"  Chapter Info: {chapter_info}")
+        logger.info("📋 Results:")
+        logger.info("  Base Pattern: %s", base_pattern)
+        logger.info("  Start Number: %d", start_number)
+        logger.info("  Chapter Info: %s", chapter_info)
     else:
-        print("❌ Could not extract pattern from URL")
+        logger.error("❌ Could not extract pattern from URL")
 
 
 if __name__ == "__main__":

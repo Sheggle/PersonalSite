@@ -4,12 +4,17 @@ Async Downloader - Fast concurrent image downloads with progress tracking
 """
 
 import asyncio
-import aiohttp
-import aiofiles
 import os
-from pathlib import Path
-from typing import List, Tuple, Optional, Dict
 import time
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import aiofiles
+import aiohttp
+
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class AsyncDownloader:
@@ -58,8 +63,8 @@ class AsyncDownloader:
         Find all available images by testing URLs until 404.
         Returns list of downloaded file paths.
         """
-        print(f"🚀 Starting concurrent download from: {base_pattern}")
-        print(f"📊 Max concurrent downloads: {self.max_concurrent}")
+        logger.info("🚀 Starting concurrent download from: %s", base_pattern)
+        logger.info("📊 Max concurrent downloads: %d", self.max_concurrent)
 
         if not chapter_info:
             chapter_info = {'series': 'Unknown', 'chapter': '1'}
@@ -70,7 +75,7 @@ class AsyncDownloader:
         chapter_dir = self.output_dir / manga_name / chapter_folder
         chapter_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"📁 Saving to: {chapter_dir}")
+        logger.info("📁 Saving to: %s", chapter_dir)
 
         downloaded_files = []
         image_num = start_number
@@ -83,7 +88,7 @@ class AsyncDownloader:
 
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
             # Start with a small batch to find the range
-            print(f"🔍 Detecting image range starting from {start_number}...")
+            logger.info("🔍 Detecting image range starting from %d...", start_number)
 
             while consecutive_404s < max_consecutive_404s:
                 # Try both jpg and png extensions
@@ -109,7 +114,12 @@ class AsyncDownloader:
                         if current_time - last_progress_time >= 1.0:  # Update every second
                             elapsed = current_time - start_time
                             rate = len(downloaded_files) / elapsed if elapsed > 0 else 0
-                            print(f"📥 Downloaded {len(downloaded_files)} images | Page {image_num} | {rate:.1f} img/s")
+                            logger.info(
+                                "📥 Downloaded %d images | Page %d | %.1f img/s",
+                                len(downloaded_files),
+                                image_num,
+                                rate,
+                            )
                             last_progress_time = current_time
 
                         break  # Found the image with this extension, move to next number
@@ -121,24 +131,29 @@ class AsyncDownloader:
 
                 # Safety limit to prevent infinite loops
                 if image_num > start_number + 1000:
-                    print("⚠️ Reached safety limit of 1000 images, stopping")
+                    logger.warning("⚠️ Reached safety limit of 1000 images, stopping")
                     break
 
         total_time = time.time() - start_time
         avg_rate = len(downloaded_files) / total_time if total_time > 0 else 0
 
-        print(f"\n✅ Download complete!")
-        print(f"📊 Total: {len(downloaded_files)} images in {total_time:.1f}s ({avg_rate:.1f} img/s)")
-        print(f"📁 Saved to: {chapter_dir}")
+        logger.info("✅ Download complete!")
+        logger.info(
+            "📊 Total: %d images in %.1fs (%.1f img/s)",
+            len(downloaded_files),
+            total_time,
+            avg_rate,
+        )
+        logger.info("📁 Saved to: %s", chapter_dir)
 
         # Create completion marker file
         if downloaded_files:  # Only if we actually downloaded something
             completion_file = chapter_dir / "completed"
             try:
                 completion_file.touch()
-                print(f"✅ Completion marker created: {completion_file}")
+                logger.info("✅ Completion marker created: %s", completion_file)
             except Exception as e:
-                print(f"⚠️ Could not create completion marker: {e}")
+                logger.warning("⚠️ Could not create completion marker: %s", e)
 
         return downloaded_files
 
@@ -147,8 +162,13 @@ class AsyncDownloader:
         Download a specific range of images concurrently.
         Useful when you know the exact range.
         """
-        print(f"🚀 Downloading images {start}-{end} from: {base_pattern}")
-        print(f"📊 Max concurrent downloads: {self.max_concurrent}")
+        logger.info(
+            "🚀 Downloading images %d-%d from: %s",
+            start,
+            end,
+            base_pattern,
+        )
+        logger.info("📊 Max concurrent downloads: %d", self.max_concurrent)
 
         if not chapter_info:
             chapter_info = {'series': 'Unknown', 'chapter': '1'}
@@ -191,17 +211,23 @@ class AsyncDownloader:
         total_time = time.time() - start_time
         avg_rate = successful_downloads / total_time if total_time > 0 else 0
 
-        print(f"\n✅ Batch download complete!")
-        print(f"📊 Downloaded: {successful_downloads}/{end-start+1} images in {total_time:.1f}s ({avg_rate:.1f} img/s)")
+        logger.info("✅ Batch download complete!")
+        logger.info(
+            "📊 Downloaded: %d/%d images in %.1fs (%.1f img/s)",
+            successful_downloads,
+            end - start + 1,
+            total_time,
+            avg_rate,
+        )
 
         # Create completion marker file
         if downloaded_files:  # Only if we actually downloaded something
             completion_file = chapter_dir / "completed"
             try:
                 completion_file.touch()
-                print(f"✅ Completion marker created: {completion_file}")
+                logger.info("✅ Completion marker created: %s", completion_file)
             except Exception as e:
-                print(f"⚠️ Could not create completion marker: {e}")
+                logger.warning("⚠️ Could not create completion marker: %s", e)
 
         return downloaded_files
 
@@ -210,7 +236,11 @@ class AsyncDownloader:
         Download a range of chapters. Returns dict of {chapter_num: [file_paths]}.
         base_pattern_template should have {chapter} placeholder, e.g. 'https://manga.pics/series/chapter-{chapter}/'
         """
-        print(f"🚀 Downloading chapters {start_chapter}-{end_chapter}")
+        logger.info(
+            "🚀 Downloading chapters %d-%d",
+            start_chapter,
+            end_chapter,
+        )
 
         if not series_info:
             series_info = {'series': 'Unknown', 'chapter': str(start_chapter)}
@@ -219,7 +249,7 @@ class AsyncDownloader:
 
         # Download each chapter
         for chapter_num in range(start_chapter, end_chapter + 1):
-            print(f"\n📖 Starting Chapter {chapter_num}...")
+            logger.info("📖 Starting Chapter %d...", chapter_num)
 
             # Create chapter-specific info
             chapter_info = series_info.copy()
@@ -234,12 +264,19 @@ class AsyncDownloader:
                 results[chapter_num] = downloaded_files
 
                 if downloaded_files:
-                    print(f"✅ Chapter {chapter_num}: {len(downloaded_files)} pages downloaded")
+                    logger.info(
+                        "✅ Chapter %d: %d pages downloaded",
+                        chapter_num,
+                        len(downloaded_files),
+                    )
                 else:
-                    print(f"❌ Chapter {chapter_num}: No images found")
+                    logger.warning(
+                        "❌ Chapter %d: No images found",
+                        chapter_num,
+                    )
 
             except Exception as e:
-                print(f"❌ Chapter {chapter_num}: Error - {e}")
+                logger.error("❌ Chapter %d: Error - %s", chapter_num, e)
                 results[chapter_num] = []
 
         return results
@@ -249,7 +286,11 @@ class AsyncDownloader:
         Auto-download the next N chapters ahead of the highest available chapter.
         Returns dict of {chapter_num: success_status}.
         """
-        print(f"🔄 Auto-downloading {ahead_count} chapters ahead of highest available Chapter {max_available_chapter}")
+        logger.info(
+            "🔄 Auto-downloading %d chapters ahead of highest available Chapter %d",
+            ahead_count,
+            max_available_chapter,
+        )
 
         # Extract series info for pattern generation
         from pattern_finder import PatternFinder
@@ -266,11 +307,11 @@ class AsyncDownloader:
             completion_marker = chapter_dir / "completed"
 
             if completion_marker.exists():
-                print(f"✅ Chapter {next_chapter} already downloaded")
+                logger.info("✅ Chapter %d already downloaded", next_chapter)
                 results[next_chapter] = True
                 continue
 
-            print(f"📥 Downloading Chapter {next_chapter}...")
+            logger.info("📥 Downloading Chapter %d...", next_chapter)
 
             try:
                 # Try to detect the correct URL pattern for this series
@@ -280,7 +321,7 @@ class AsyncDownloader:
                     # Fallback to standard manga.pics pattern
                     series_slug = current_series.lower().replace('_', '-').replace(' ', '-')
                     base_pattern = f"https://manga.pics/{series_slug}/chapter-{next_chapter}/"
-                    print(f"🔍 Using fallback pattern: {base_pattern}")
+                    logger.info("🔍 Using fallback pattern: %s", base_pattern)
 
                 chapter_info = {
                     'series': current_series,
@@ -291,14 +332,21 @@ class AsyncDownloader:
                 downloaded_files = await self.find_all_images(base_pattern, 0, chapter_info)
 
                 if downloaded_files:
-                    print(f"✅ Chapter {next_chapter}: {len(downloaded_files)} pages downloaded")
+                    logger.info(
+                        "✅ Chapter %d: %d pages downloaded",
+                        next_chapter,
+                        len(downloaded_files),
+                    )
                     results[next_chapter] = True
                 else:
-                    print(f"❌ Chapter {next_chapter}: No images found (might not exist yet)")
+                    logger.warning(
+                        "❌ Chapter %d: No images found (might not exist yet)",
+                        next_chapter,
+                    )
                     results[next_chapter] = False
 
             except Exception as e:
-                print(f"❌ Chapter {next_chapter}: Error - {e}")
+                logger.error("❌ Chapter %d: Error - %s", next_chapter, e)
                 results[next_chapter] = False
 
         return results
@@ -326,15 +374,15 @@ class AsyncDownloader:
                         result = finder.find_pattern(raven_url)
                         if result and result.get('base_pattern'):
                             pattern = result['base_pattern']
-                            print(f"🔍 Detected pattern from RavenScans: {pattern}")
+                            logger.info("🔍 Detected pattern from RavenScans: %s", pattern)
                             return pattern
                     except Exception as e:
-                        print(f"⚠️ Pattern detection failed: {e}")
+                        logger.warning("⚠️ Pattern detection failed: %s", e)
 
                     break
 
         except Exception as e:
-            print(f"⚠️ Error in pattern detection: {e}")
+            logger.warning("⚠️ Error in pattern detection: %s", e)
 
         return None
 
@@ -366,8 +414,10 @@ def main():
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python async_downloader.py <base_pattern> [start_number]")
-        print("Example: python async_downloader.py https://manga.pics/call-of-the-spear/chapter-1/ 0")
+        logger.error("Usage: python async_downloader.py <base_pattern> [start_number]")
+        logger.info(
+            "Example: python async_downloader.py https://manga.pics/call-of-the-spear/chapter-1/ 0"
+        )
         return
 
     base_pattern = sys.argv[1]
@@ -381,10 +431,10 @@ def main():
     async def run_download():
         downloader = AsyncDownloader(max_concurrent=30)
         files = await downloader.find_all_images(base_pattern, start_number, chapter_info)
-        print(f"\nDownloaded files:")
+        logger.info("Downloaded files:")
         for i, filepath in enumerate(files, 1):
             filename = filepath.split('/')[-1]
-            print(f"  {i:2d}. {filename}")
+            logger.info("%2d. %s", i, filename)
 
     asyncio.run(run_download())
 

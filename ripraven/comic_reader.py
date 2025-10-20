@@ -3,12 +3,17 @@
 RipRaven Comic Reader - GUI app for reading downloaded comics
 """
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import os
-from pathlib import Path
-from PIL import Image, ImageTk
 import glob
+import os
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from PIL import Image, ImageTk
+
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class ComicReader:
@@ -240,7 +245,7 @@ class ComicReader:
                 y_position += img.height + 20
 
             except Exception as e:
-                print(f"Error loading image {image_path}: {e}")
+                logger.error("Error loading image %s: %s", image_path, e)
                 # Add error placeholder
                 self.canvas.create_rectangle(x_position, y_position,
                                            x_position + max_width, y_position + 100,
@@ -352,9 +357,9 @@ Tips:
 
     def run(self):
         """Start the comic reader."""
-        print("🔥 Starting RipRaven Comic Reader...")
-        print("📖 Use the dropdowns to select a series and chapter")
-        print("⌨️  Keyboard shortcuts: ↑↓ to scroll, h for help")
+        logger.info("🔥 Starting RipRaven Comic Reader...")
+        logger.info("📖 Use the dropdowns to select a series and chapter")
+        logger.info("⌨️  Keyboard shortcuts: ↑↓ to scroll, h for help")
 
         self.root.mainloop()
 

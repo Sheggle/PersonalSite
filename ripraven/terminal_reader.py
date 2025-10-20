@@ -3,11 +3,16 @@
 RipRaven Terminal Comic Reader - Terminal-based comic reader with image preview
 """
 
+import glob
 import os
 import sys
 from pathlib import Path
-import glob
+
 from PIL import Image
+
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class TerminalComicReader:
@@ -24,26 +29,26 @@ class TerminalComicReader:
 
     def print_header(self):
         """Print app header."""
-        print("🔥" * 50)
-        print("🔥 RipRaven Comic Reader - Terminal Edition 🔥")
-        print("🔥" * 50)
-        print()
+        logger.info("🔥" * 50)
+        logger.info("🔥 RipRaven Comic Reader - Terminal Edition 🔥")
+        logger.info("🔥" * 50)
+        logger.info("")
 
     def list_series(self):
         """List available series."""
         if not self.downloads_dir.exists():
-            print("❌ Downloads directory not found!")
+            logger.error("❌ Downloads directory not found!")
             return []
 
         series_dirs = [d.name for d in self.downloads_dir.iterdir() if d.is_dir()]
 
         if not series_dirs:
-            print("📂 No series found. Please download some comics first!")
+            logger.info("📂 No series found. Please download some comics first!")
             return []
 
-        print("📚 Available Series:")
+        logger.info("📚 Available Series:")
         for i, series in enumerate(series_dirs, 1):
-            print(f"  {i:2d}. {series}")
+            logger.info("  %2d. %s", i, series)
 
         return series_dirs
 
@@ -52,22 +57,23 @@ class TerminalComicReader:
         series_path = self.downloads_dir / series_name
 
         if not series_path.exists():
-            print(f"❌ Series '{series_name}' not found!")
+            logger.error("❌ Series '%s' not found!", series_name)
             return []
 
         chapter_dirs = [d.name for d in series_path.iterdir() if d.is_dir()]
         chapter_dirs.sort()
 
         if not chapter_dirs:
-            print(f"📂 No chapters found for {series_name}!")
+            logger.info("📂 No chapters found for %s!", series_name)
             return []
 
-        print(f"\n📖 Chapters for {series_name}:")
+        logger.info("")
+        logger.info("📖 Chapters for %s:", series_name)
         for i, chapter in enumerate(chapter_dirs, 1):
             # Check if chapter is complete
             completion_marker = series_path / chapter / "completed"
             status = "✅" if completion_marker.exists() else "⚠️ "
-            print(f"  {i:2d}. {chapter} {status}")
+            logger.info("  %2d. %s %s", i, chapter, status)
 
         return chapter_dirs
 
@@ -76,13 +82,13 @@ class TerminalComicReader:
         chapter_path = self.downloads_dir / series_name / chapter_name
 
         if not chapter_path.exists():
-            print(f"❌ Chapter '{chapter_name}' not found!")
+            logger.error("❌ Chapter '%s' not found!", chapter_name)
             return []
 
         # Check completion status
         completion_marker = chapter_path / "completed"
         if not completion_marker.exists():
-            print(f"⚠️  Warning: Chapter appears incomplete (no 'completed' marker)")
+            logger.warning("⚠️  Warning: Chapter appears incomplete (no 'completed' marker)")
 
         # Find image files
         image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.webp']
@@ -96,10 +102,11 @@ class TerminalComicReader:
         image_files.sort()
 
         if not image_files:
-            print(f"❌ No images found in {chapter_name}!")
+            logger.error("❌ No images found in %s!", chapter_name)
             return []
 
-        print(f"\n📄 Loaded {len(image_files)} pages from {chapter_name}")
+        logger.info("")
+        logger.info("📄 Loaded %d pages from %s", len(image_files), chapter_name)
         return image_files
 
     def show_image_info(self, image_path, page_num, total_pages):
@@ -109,13 +116,13 @@ class TerminalComicReader:
             width, height = img.size
             file_size = os.path.getsize(image_path) / 1024  # KB
 
-            print(f"📖 Page {page_num}/{total_pages}")
-            print(f"📏 Dimensions: {width}x{height}")
-            print(f"💾 Size: {file_size:.1f} KB")
-            print(f"📂 File: {os.path.basename(image_path)}")
+            logger.info("📖 Page %d/%d", page_num, total_pages)
+            logger.info("📏 Dimensions: %dx%d", width, height)
+            logger.info("💾 Size: %.1f KB", file_size)
+            logger.info("📂 File: %s", os.path.basename(image_path))
 
         except Exception as e:
-            print(f"❌ Error reading image: {e}")
+            logger.error("❌ Error reading image: %s", e)
 
     def display_image_ascii(self, image_path, width=80, height=24):
         """Display a simple ASCII representation of the image."""
@@ -129,33 +136,35 @@ class TerminalComicReader:
             # ASCII characters from dark to light
             ascii_chars = " .:-=+*#%@"
 
-            print("\n" + "─" * width)
+            logger.info("")
+            logger.info("─" * width)
             for y in range(height):
                 line = ""
                 for x in range(width):
                     pixel = img.getpixel((x, y))
                     char_index = pixel * (len(ascii_chars) - 1) // 255
                     line += ascii_chars[char_index]
-                print(line)
-            print("─" * width)
+                logger.info(line)
+            logger.info("─" * width)
 
         except Exception as e:
-            print(f"❌ Could not display image: {e}")
+            logger.error("❌ Could not display image: %s", e)
 
     def show_navigation_help(self):
         """Show navigation commands."""
-        print("\n⌨️  Commands:")
-        print("  n, next     - Next page")
-        print("  p, prev     - Previous page")
-        print("  f, first    - First page")
-        print("  l, last     - Last page")
-        print("  g <num>     - Go to page number")
-        print("  s, series   - Change series")
-        print("  c, chapter  - Change chapter")
-        print("  i, info     - Show image info")
-        print("  a, ascii    - Toggle ASCII preview")
-        print("  h, help     - Show this help")
-        print("  q, quit     - Quit reader")
+        logger.info("")
+        logger.info("⌨️  Commands:")
+        logger.info("  n, next     - Next page")
+        logger.info("  p, prev     - Previous page")
+        logger.info("  f, first    - First page")
+        logger.info("  l, last     - Last page")
+        logger.info("  g <num>     - Go to page number")
+        logger.info("  s, series   - Change series")
+        logger.info("  c, chapter  - Change chapter")
+        logger.info("  i, info     - Show image info")
+        logger.info("  a, ascii    - Toggle ASCII preview")
+        logger.info("  h, help     - Show this help")
+        logger.info("  q, quit     - Quit reader")
 
     def get_user_input(self, prompt="Command"):
         """Get user input with prompt."""
@@ -185,10 +194,10 @@ class TerminalComicReader:
                 if 0 <= series_index < len(series_list):
                     return series_list[series_index]
                 else:
-                    print("❌ Invalid series number!")
+                    logger.error("❌ Invalid series number!")
                     input("Press Enter to continue...")
             except ValueError:
-                print("❌ Please enter a valid number!")
+                logger.error("❌ Please enter a valid number!")
                 input("Press Enter to continue...")
 
     def select_chapter(self, series_name):
@@ -196,7 +205,7 @@ class TerminalComicReader:
         while True:
             self.clear_screen()
             self.print_header()
-            print(f"📚 Series: {series_name}")
+            logger.info("📚 Series: %s", series_name)
 
             chapter_list = self.list_chapters(series_name)
             if not chapter_list:
@@ -215,16 +224,16 @@ class TerminalComicReader:
                 if 0 <= chapter_index < len(chapter_list):
                     return chapter_list[chapter_index]
                 else:
-                    print("❌ Invalid chapter number!")
+                    logger.error("❌ Invalid chapter number!")
                     input("Press Enter to continue...")
             except ValueError:
-                print("❌ Please enter a valid number!")
+                logger.error("❌ Please enter a valid number!")
                 input("Press Enter to continue...")
 
     def read_chapter(self):
         """Main chapter reading loop."""
         if not self.images:
-            print("❌ No images loaded!")
+            logger.error("❌ No images loaded!")
             return
 
         show_ascii = True
@@ -237,7 +246,7 @@ class TerminalComicReader:
             current_image = self.images[self.current_page]
             total_pages = len(self.images)
 
-            print(f"📚 {self.current_series} - {self.current_chapter}")
+            logger.info("📚 %s - %s", self.current_series, self.current_chapter)
             self.show_image_info(current_image, self.current_page + 1, total_pages)
 
             # Show ASCII preview if enabled
@@ -256,13 +265,13 @@ class TerminalComicReader:
                 if self.current_page < len(self.images) - 1:
                     self.current_page += 1
                 else:
-                    print("📄 Already at last page!")
+                    logger.info("📄 Already at last page!")
                     input("Press Enter to continue...")
             elif command in ['p', 'prev']:
                 if self.current_page > 0:
                     self.current_page -= 1
                 else:
-                    print("📄 Already at first page!")
+                    logger.info("📄 Already at first page!")
                     input("Press Enter to continue...")
             elif command in ['f', 'first']:
                 self.current_page = 0
@@ -274,10 +283,10 @@ class TerminalComicReader:
                     if 0 <= page_num < len(self.images):
                         self.current_page = page_num
                     else:
-                        print(f"❌ Page must be between 1 and {len(self.images)}!")
+                        logger.error("❌ Page must be between 1 and %d!", len(self.images))
                         input("Press Enter to continue...")
                 except (ValueError, IndexError):
-                    print("❌ Invalid page number! Use: g <number>")
+                    logger.error("❌ Invalid page number! Use: g <number>")
                     input("Press Enter to continue...")
             elif command in ['s', 'series']:
                 break  # Return to series selection
@@ -294,17 +303,17 @@ class TerminalComicReader:
             elif command in ['a', 'ascii']:
                 show_ascii = not show_ascii
                 status = "enabled" if show_ascii else "disabled"
-                print(f"📺 ASCII preview {status}")
+                logger.info("📺 ASCII preview %s", status)
                 input("Press Enter to continue...")
             elif command in ['h', 'help']:
                 input("Press Enter to continue...")
             else:
-                print("❌ Unknown command! Type 'h' for help.")
+                logger.error("❌ Unknown command! Type 'h' for help.")
                 input("Press Enter to continue...")
 
     def run(self):
         """Main application loop."""
-        print("🔥 Starting RipRaven Terminal Comic Reader...")
+        logger.info("🔥 Starting RipRaven Terminal Comic Reader...")
 
         while True:
             # Select series
@@ -336,7 +345,7 @@ class TerminalComicReader:
                 self.read_chapter()
 
         self.clear_screen()
-        print("👋 Thanks for using RipRaven Comic Reader!")
+        logger.info("👋 Thanks for using RipRaven Comic Reader!")
 
 
 def main():
@@ -345,10 +354,10 @@ def main():
 
     if len(sys.argv) > 1:
         if sys.argv[1] in ['-h', '--help']:
-            print("🔥 RipRaven Terminal Comic Reader")
-            print("Usage: python terminal_reader.py [downloads_folder]")
-            print()
-            print("A terminal-based comic reader with ASCII preview")
+            logger.info("🔥 RipRaven Terminal Comic Reader")
+            logger.info("Usage: python terminal_reader.py [downloads_folder]")
+            logger.info("")
+            logger.info("A terminal-based comic reader with ASCII preview")
             return
 
         downloads_dir = sys.argv[1]
