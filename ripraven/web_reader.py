@@ -1229,7 +1229,10 @@ class ComicWebServer:
                 this.currentDisplayChapter = null;
 
                 // API base URL - works both when standalone and when mounted
-                this.apiBase = window.location.pathname.replace(/\/$/, '') + '/api';
+                const rawPath = window.location.pathname.replace(/\/$/, '');
+                const mountMatch = rawPath.match(/^(.*?\/api\/ripraven)(?:\/.*)?$/);
+                const basePath = mountMatch ? mountMatch[1] : '';
+                this.apiBase = `${basePath}/api`.replace(/\/{2,}/g, '/');
 
                 this.setupElements();
                 this.loadSeries();
