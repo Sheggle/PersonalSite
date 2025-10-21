@@ -116,7 +116,7 @@ const UIController = {
             return;
         }
 
-        const seriesData = window.RipRaven.StateManager ? window.RipRaven.StateManager.getSeriesData() : [];
+        const seriesData = window.RipRaven.StateManager ? window.RipRaven.StateManager.seriesData : [];
         const series = seriesData.find(s => s.name === seriesName);
         if (!series) return;
 
@@ -130,7 +130,7 @@ const UIController = {
 
     onChapterChange: async function() {
         const chapterName = this.chapterSelect ? this.chapterSelect.value : '';
-        const currentSeries = window.RipRaven.StateManager ? window.RipRaven.StateManager.getCurrentSeries() : null;
+        const currentSeries = window.RipRaven.StateManager ? window.RipRaven.StateManager.currentSeries : null;
 
         if (!chapterName || !currentSeries) return;
 
@@ -163,8 +163,8 @@ const UIController = {
 
     // Chapter Loading
     loadChapter: async function() {
-        const currentSeries = window.RipRaven.StateManager ? window.RipRaven.StateManager.getCurrentSeries() : null;
-        const currentChapter = window.RipRaven.StateManager ? window.RipRaven.StateManager.getCurrentChapter() : null;
+        const currentSeries = window.RipRaven.StateManager ? window.RipRaven.StateManager.currentSeries : null;
+        const currentChapter = window.RipRaven.StateManager ? window.RipRaven.StateManager.currentChapter : null;
 
         if (!currentSeries || !currentChapter) return;
 
@@ -320,7 +320,7 @@ const UIController = {
 
     // Download Status Management
     checkDownloadStatus: async function() {
-        const currentSeries = window.RipRaven.StateManager ? window.RipRaven.StateManager.getCurrentSeries() : null;
+        const currentSeries = window.RipRaven.StateManager ? window.RipRaven.StateManager.currentSeries : null;
         if (!currentSeries || !window.RipRaven.APIClient) return;
 
         try {

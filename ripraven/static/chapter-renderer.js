@@ -41,7 +41,7 @@ const ChapterRenderer = {
 
                     // Update URL and save progress
                     if (window.RipRaven.NavigationManager && window.RipRaven.StateManager) {
-                        const currentSeries = window.RipRaven.StateManager.getCurrentSeries();
+                        const currentSeries = window.RipRaven.StateManager.currentSeries;
                         window.RipRaven.NavigationManager.updateURL(currentSeries, chapterNum, { method: 'replace' });
                     }
 
@@ -53,9 +53,9 @@ const ChapterRenderer = {
                     // Save reading progress
                     this.saveReadingProgress();
 
-                    // Check for new content if near frontier
-                    const maxLoadedChapter = window.RipRaven.StateManager ? window.RipRaven.StateManager.getMaxLoadedChapter() : null;
-                    if (maxLoadedChapter !== null && chapterNum >= maxLoadedChapter - 1) {
+                    // Check for new content if at frontier
+                    const maxLoadedChapter = window.RipRaven.StateManager ? window.RipRaven.StateManager.maxLoadedChapter : null;
+                    if (maxLoadedChapter !== null && chapterNum >= maxLoadedChapter) {
                         this.checkForNewContent();
                     }
                 }
@@ -76,7 +76,7 @@ const ChapterRenderer = {
         this.comicContainer.innerHTML = '';
         this.chapterBoundaries = []; // Keep for backward compatibility
 
-        let highestChapterInBatch = window.RipRaven.StateManager ? window.RipRaven.StateManager.getMaxLoadedChapter() || 0 : 0;
+        let highestChapterInBatch = window.RipRaven.StateManager ? window.RipRaven.StateManager.maxLoadedChapter || 0 : 0;
 
         chaptersData.forEach((chapter, chapterIndex) => {
             // Add chapter divider (except for first chapter)
@@ -191,8 +191,8 @@ const ChapterRenderer = {
         // Update state manager
         if (window.RipRaven.StateManager) {
             window.RipRaven.StateManager.appendChaptersData(newChapters);
-            const newestChapterNumber = newChapters.reduce((max, ch) => Math.max(max, ch.chapter_num), window.RipRaven.StateManager.getMaxLoadedChapter() || 0);
-            window.RipRaven.StateManager.setMaxLoadedChapter(Math.max(window.RipRaven.StateManager.getMaxLoadedChapter() || 0, newestChapterNumber));
+            const newestChapterNumber = newChapters.reduce((max, ch) => Math.max(max, ch.chapter_num), window.RipRaven.StateManager.maxLoadedChapter || 0);
+            window.RipRaven.StateManager.setMaxLoadedChapter(Math.max(window.RipRaven.StateManager.maxLoadedChapter || 0, newestChapterNumber));
         }
 
         // Maintain scroll position
@@ -268,10 +268,11 @@ const ChapterRenderer = {
         }
 
         try {
-            // Check if new chapters are available
-            const newData = await window.RipRaven.APIClient.loadInfiniteChapters(currentSeries, currentStartChapter);
+            // Check if new chapters are available - start from next chapter after max loaded
+            const nextChapterToLoad = (window.RipRaven.StateManager.maxLoadedChapter || 0) + 1;
+            const newData = await window.RipRaven.APIClient.loadInfiniteChapters(currentSeries, nextChapterToLoad);
 
-            const currentMax = window.RipRaven.StateManager.getMaxLoadedChapter() || 0;
+            const currentMax = window.RipRaven.StateManager.maxLoadedChapter || 0;
             const chaptersToAppend = newData.chapters.filter(ch => ch.chapter_num > currentMax);
 
             if (chaptersToAppend.length > 0) {
@@ -291,7 +292,7 @@ const ChapterRenderer = {
         }
 
         const currentSeries = window.RipRaven.StateManager.getCurrentSeries();
-        const currentChapter = window.RipRaven.StateManager.getCurrentChapter();
+        const currentChapter = window.RipRaven.StateManager.currentChapter;
 
         if (!currentSeries || !currentChapter) {
             return;

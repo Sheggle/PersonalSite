@@ -32,19 +32,11 @@ const StateManager = {
     },
 
     // Series Management
-    getCurrentSeries: function() {
-        return this.currentSeries;
-    },
-
     setCurrentSeries: function(series) {
         this.currentSeries = series;
         if (window.RipRaven.NavigationManager) {
             window.RipRaven.NavigationManager.setActiveSeriesSlug(series);
         }
-    },
-
-    getSeriesData: function() {
-        return this.seriesData;
     },
 
     setSeriesData: function(data) {
@@ -58,62 +50,30 @@ const StateManager = {
             return null;
         }
 
+        // Try exact match first
         const directMatch = this.seriesData.find(series => series.name === inputName);
-        if (directMatch) {
-            return directMatch;
-        }
+        if (directMatch) return directMatch;
 
-        const normalized = window.RipRaven.UrlUtils.normalizeSeriesSlug(inputName);
-        const normalizedMatch = this.seriesData.find(series => series.name === normalized);
-        if (normalizedMatch) {
-            return normalizedMatch;
-        }
-
+        // Try case-insensitive match
         const lower = inputName.toLowerCase();
-        const exactLower = this.seriesData.find(series => series.name.toLowerCase() === lower);
-        if (exactLower) {
-            return exactLower;
-        }
-
-        const normalizedLower = normalized.toLowerCase();
-        return this.seriesData.find(series => series.name.toLowerCase() === normalizedLower) || null;
+        return this.seriesData.find(series => series.name.toLowerCase() === lower) || null;
     },
 
     // Chapter Management
-    getCurrentChapter: function() {
-        return this.currentChapter;
-    },
-
     setCurrentChapter: function(chapter) {
         this.currentChapter = chapter;
-    },
-
-    getCurrentDisplayChapter: function() {
-        return this.currentDisplayChapter;
     },
 
     setCurrentDisplayChapter: function(chapter) {
         this.currentDisplayChapter = chapter;
     },
 
-    getCurrentStartChapter: function() {
-        return this.currentStartChapter;
-    },
-
     setCurrentStartChapter: function(chapter) {
         this.currentStartChapter = chapter;
     },
 
-    getMaxLoadedChapter: function() {
-        return this.maxLoadedChapter;
-    },
-
     setMaxLoadedChapter: function(chapter) {
         this.maxLoadedChapter = chapter;
-    },
-
-    getChaptersData: function() {
-        return this.chaptersData;
     },
 
     setChaptersData: function(data) {
@@ -124,13 +84,20 @@ const StateManager = {
         this.chaptersData = this.chaptersData.concat(newChapters);
     },
 
-    // Recent Chapters Management
-    getRecentChapters: function() {
-        return this.recentChapters;
-    },
-
     setRecentChapters: function(chapters) {
         this.recentChapters = chapters;
+    },
+
+    getCurrentStartChapter: function() {
+        return this.currentStartChapter;
+    },
+
+    getCurrentSeries: function() {
+        return this.currentSeries;
+    },
+
+    getCurrentChapter: function() {
+        return this.currentChapter;
     },
 
     // Navigation Management
@@ -215,14 +182,6 @@ const StateManager = {
         this.pendingNavigation = null;
     },
 
-    getPendingNavigation: function() {
-        return this.pendingNavigation;
-    },
-
-    clearPendingNavigation: function() {
-        this.pendingNavigation = null;
-    },
-
     // Utility Methods
     showNoChapterSelected: function() {
         if (window.RipRaven.UIController) {
@@ -243,23 +202,6 @@ const StateManager = {
         this.recentChapters = [];
         this.chaptersData = [];
         this.pendingNavigation = null;
-    },
-
-    /**
-     * Get current state snapshot for debugging
-     */
-    getStateSnapshot: function() {
-        return {
-            currentSeries: this.currentSeries,
-            currentChapter: this.currentChapter,
-            currentDisplayChapter: this.currentDisplayChapter,
-            currentStartChapter: this.currentStartChapter,
-            maxLoadedChapter: this.maxLoadedChapter,
-            seriesCount: this.seriesData.length,
-            recentCount: this.recentChapters.length,
-            chaptersDataCount: this.chaptersData.length,
-            hasPendingNavigation: !!this.pendingNavigation
-        };
     }
 };
 

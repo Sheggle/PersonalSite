@@ -19,13 +19,10 @@ const NavigationManager = {
      * Canonicalize the current path if needed
      */
     canonicalizePath: function() {
-        const rawPath = window.location.pathname.replace(/\/$/, '');
-        const apiMatch = rawPath.match(/^(.*?\/api\/ripraven)(?:\/.*)?$/);
-        const displayMatch = rawPath.match(/^(.*?\/ripraven)(?:\/.*)?$/);
-
-        if (!displayMatch && apiMatch && !rawPath.endsWith('.html')) {
-            const suffix = rawPath.slice(apiMatch[1].length) || '';
-            const canonicalPath = `${this.displayBase}${suffix}` || this.displayBase;
+        const path = window.location.pathname;
+        if (path.startsWith('/api/ripraven') && !path.endsWith('.html')) {
+            const suffix = path.slice('/api/ripraven'.length);
+            const canonicalPath = `/ripraven${suffix}`;
             history.replaceState(history.state ?? {}, '', canonicalPath);
         }
     },
@@ -37,16 +34,14 @@ const NavigationManager = {
         return window.RipRaven.UrlUtils.parseSeriesChapterFromURL();
     },
 
+
     /**
      * Update browser URL and history
      */
     updateURL: function(seriesName, chapterNum, options = {}) {
         const method = options.method || 'replace';
-        const force = Boolean(options.force);
-        const baseRoot = this.displayBase;
-        const slugSource = seriesName || (chapterNum ? this.activeSeriesSlug : null);
-        const encodedSeries = slugSource ? encodeURIComponent(slugSource) : '';
-        let targetPath = baseRoot;
+        const encodedSeries = seriesName ? encodeURIComponent(seriesName) : '';
+        let targetPath = this.displayBase;
         if (encodedSeries) {
             targetPath += `/${encodedSeries}`;
         }
@@ -54,30 +49,12 @@ const NavigationManager = {
             targetPath += `?chapter=${chapterNum}`;
         }
 
-        const currentPath = window.location.pathname.replace(/\/$/, '') || '/';
-        const currentWithQuery = currentPath + window.location.search;
-        const pathsDiffer = currentWithQuery !== targetPath;
-        const state = (seriesName && chapterNum)
-            ? { series: seriesName, chapter: chapterNum }
-            : {};
-
-        if (method === 'none') {
-            this.updateDocumentTitle(seriesName, chapterNum);
-            return;
-        }
+        const state = (seriesName && chapterNum) ? { series: seriesName, chapter: chapterNum } : {};
 
         if (method === 'push') {
-            if (pathsDiffer || force) {
-                history.pushState(state, '', targetPath);
-            } else {
-                history.replaceState(state, '', targetPath);
-            }
+            history.pushState(state, '', targetPath);
         } else {
-            if (pathsDiffer || force) {
-                history.replaceState(state, '', targetPath);
-            } else if (seriesName && chapterNum) {
-                history.replaceState(state, '', targetPath);
-            }
+            history.replaceState(state, '', targetPath);
         }
 
         this.updateDocumentTitle(seriesName, chapterNum);

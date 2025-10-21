@@ -111,61 +111,6 @@ class ComicReader {
         });
     }
 
-    /**
-     * Public method for scheduled navigation (for compatibility)
-     */
-    scheduleNavigation(seriesName, chapterNum, options = {}) {
-        window.RipRaven.StateManager.scheduleNavigation(seriesName, chapterNum, options);
-    }
-
-    /**
-     * Legacy methods for compatibility
-     */
-
-    // Method to be called when series data is available (compatibility)
-    tryProcessPendingNavigation() {
-        // This is now handled by StateManager
-        return window.RipRaven.StateManager.tryProcessPendingNavigation();
-    }
-
-    // Method for finding series (compatibility)
-    findSeries(inputName) {
-        return window.RipRaven.StateManager.findSeries(inputName);
-    }
-
-    // Getters for state (compatibility)
-    get currentSeries() {
-        return window.RipRaven.StateManager.getCurrentSeries();
-    }
-
-    get currentChapter() {
-        return window.RipRaven.StateManager.getCurrentChapter();
-    }
-
-    get seriesData() {
-        return window.RipRaven.StateManager.getSeriesData();
-    }
-
-    get recentChapters() {
-        return window.RipRaven.StateManager.getRecentChapters();
-    }
-
-    get chaptersData() {
-        return window.RipRaven.StateManager.getChaptersData();
-    }
-
-    // Setters for state (compatibility)
-    set currentSeries(value) {
-        window.RipRaven.StateManager.setCurrentSeries(value);
-    }
-
-    set currentChapter(value) {
-        window.RipRaven.StateManager.setCurrentChapter(value);
-    }
-
-    set seriesData(value) {
-        window.RipRaven.StateManager.setSeriesData(value);
-    }
 
     /**
      * Cleanup method
