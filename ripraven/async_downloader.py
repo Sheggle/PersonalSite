@@ -4,6 +4,7 @@ Async Downloader - Fast concurrent image downloads with progress tracking
 """
 
 import asyncio
+import logging
 import os
 import time
 from pathlib import Path
@@ -12,9 +13,7 @@ from typing import Dict, List, Optional, Tuple
 import aiofiles
 import aiohttp
 
-from .logging_utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class AsyncDownloader:

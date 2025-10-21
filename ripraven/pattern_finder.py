@@ -3,15 +3,14 @@
 Pattern Finder - Extract manga.pics URL patterns from RavenScans pages
 """
 
+import logging
 import re
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
 
-from .logging_utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class PatternFinder:

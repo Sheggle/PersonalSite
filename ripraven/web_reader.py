@@ -5,7 +5,7 @@ RipRaven Web Comic Reader - FastAPI backend server
 
 import asyncio
 import json
-import os
+import logging
 import re
 from datetime import datetime
 from importlib import resources
@@ -16,9 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
-from .logging_utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def natural_sort_key(text: str) -> list:
@@ -85,11 +83,7 @@ class RipRavenAPI:
     def __init__(self, downloads_dir: str | Path = "../data/ripraven/downloads"):
         self.downloads_dir = Path(downloads_dir)
         # Calculate recent_chapters.json path relative to downloads_dir
-        if isinstance(downloads_dir, str):
-            downloads_path = Path(downloads_dir)
-        else:
-            downloads_path = downloads_dir
-        self.recent_file = downloads_path.parent / "recent_chapters.json"
+        self.recent_file = Path(downloads_dir).parent / "recent_chapters.json"
 
         # Track background download status
         self.download_status = {}  # {f"{series}_{chapter}": DownloadStatus}
@@ -403,7 +397,7 @@ class RipRavenAPI:
         @self.router.get("/{series_name}/{chapter_num}", response_class=HTMLResponse)
         async def read_chapter(series_name: str, chapter_num: int):
             """Serve the comic reader with a specific series and chapter pre-loaded."""
-            return self.get_index_html()
+            return self.get_reader_html()
 
         # Static files are embedded in the HTML, no need for separate directory
 
@@ -449,7 +443,7 @@ class RipRavenAPI:
                     chapter_num,
                 )
 
-        except Exception as e:
+        except Exception:
             logger.exception("❌ Background download error for %s", series_name)
 
     def scan_series(self) -> List[SeriesInfo]:
@@ -580,7 +574,7 @@ class RipRavenAPI:
         # Save to file
         try:
             with open(self.recent_file, 'w') as f:
-                json.dump([r.dict() for r in recent_chapters], f, indent=2)
+                json.dump([r.model_dump() for r in recent_chapters], f, indent=2)
         except Exception as e:
             logger.error("Error saving recent chapters: %s", e)
 

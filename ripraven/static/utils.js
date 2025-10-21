@@ -161,103 +161,7 @@ const DOMUtils = {
     }
 };
 
-/**
- * API Client Helpers
- */
-const APIUtils = {
-    /**
-     * Make a GET request to the RipRaven API
-     */
-    get: async function(endpoint) {
-        const apiBase = window.RipRaven.getApiBaseUrl();
-        const response = await fetch(`${apiBase}${endpoint}`);
-        if (!response.ok) {
-            throw new Error(`API request failed: ${response.status}`);
-        }
-        return response.json();
-    },
 
-    /**
-     * Make a POST request to the RipRaven API
-     */
-    post: async function(endpoint, data) {
-        const apiBase = window.RipRaven.getApiBaseUrl();
-        const response = await fetch(`${apiBase}${endpoint}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(data)
-        });
-        if (!response.ok) {
-            throw new Error(`API request failed: ${response.status}`);
-        }
-        return response.json();
-    }
-};
-
-/**
- * Import manga function - extracted from reader template
- */
-async function importManga() {
-    const urlInput = document.getElementById('mangaUrl');
-    const importBtn = document.getElementById('importBtn');
-    const importStatus = document.getElementById('importStatus');
-
-    const url = urlInput.value.trim();
-
-    if (!url) {
-        importStatus.textContent = 'Please enter a RavenScans URL';
-        importStatus.style.color = '#ff6b6b';
-        return;
-    }
-
-    // Basic URL validation
-    if (!url.includes('ravenscans.com')) {
-        importStatus.textContent = 'Please enter a valid RavenScans URL';
-        importStatus.style.color = '#ff6b6b';
-        return;
-    }
-
-    // Disable button and show loading state
-    importBtn.disabled = true;
-    importBtn.textContent = 'Importing...';
-    importStatus.textContent = 'Extracting manga information...';
-    importStatus.style.color = '#cccccc';
-
-    const apiBase = getApiBaseUrl();
-
-    try {
-        const response = await fetch(`${apiBase}/import-manga`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ url: url })
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            importStatus.textContent = `✅ Successfully imported: ${result.series} - Chapter ${result.chapter}`;
-            importStatus.style.color = '#4caf50';
-            urlInput.value = '';
-
-            // Refresh the series list to show the new manga
-            window.location.reload();
-        } else {
-            importStatus.textContent = `❌ Error: ${result.detail || 'Import failed'}`;
-            importStatus.style.color = '#ff6b6b';
-        }
-    } catch (error) {
-        importStatus.textContent = `❌ Network error: ${error.message}`;
-        importStatus.style.color = '#ff6b6b';
-    } finally {
-        // Re-enable button
-        importBtn.disabled = false;
-        importBtn.textContent = 'Import';
-    }
-}
 
 /**
  * Keyboard shortcuts handler
@@ -306,8 +210,6 @@ window.RipRaven = {
     getDisplayBaseUrl,
     UrlUtils,
     DOMUtils,
-    APIUtils,
-    importManga,
     setupKeyboardShortcuts,
     parseChapterNumber
 };
