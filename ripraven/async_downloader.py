@@ -156,191 +156,81 @@ class AsyncDownloader:
 
         return downloaded_files
 
-    async def download_specific_range(self, base_pattern: str, start: int, end: int, chapter_info: dict = None) -> List[str]:
+    async def download_chapters(
+        self,
+        series_name: str,
+        chapters: List[int],
+        *,
+        base_pattern_template: str | None = None,
+        series_info: dict | None = None,
+        start_number: int = 0,
+    ) -> Dict[int, List[str]]:
         """
-        Download a specific range of images concurrently.
-        Useful when you know the exact range.
+        Download one or more chapters and return downloaded file paths per chapter.
+
+        When ``base_pattern_template`` is provided it must contain a ``{chapter}``
+        placeholder that will be formatted with the chapter number to produce the
+        download URL prefix. If it is omitted the downloader will attempt to detect
+        a suitable pattern via ``detect_series_pattern`` and fall back to the
+        standard manga.pics URL style.
         """
-        logger.info(
-            "🚀 Downloading images %d-%d from: %s",
-            start,
-            end,
-            base_pattern,
-        )
-        logger.info("📊 Max concurrent downloads: %d", self.max_concurrent)
+        if not chapters:
+            return {}
 
-        if not chapter_info:
-            chapter_info = {'series': 'Unknown', 'chapter': '1'}
+        logger.info("🔄 Downloading chapters: %s", ", ".join(map(str, chapters)))
 
-        # Create organized folder structure
-        manga_name = chapter_info['series'].replace(' ', '_').replace('-', '_')
-        chapter_folder = f"chapter_{chapter_info['chapter']}"
-        chapter_dir = self.output_dir / manga_name / chapter_folder
-        chapter_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure series info always has a sensible default
+        base_series_info = (series_info or {}).copy()
+        if "series" not in base_series_info:
+            base_series_info["series"] = series_name or "Unknown"
 
-        tasks = []
-        start_time = time.time()
+        results: Dict[int, List[str]] = {}
 
-        async with aiohttp.ClientSession(timeout=self.timeout) as session:
-            # Create download tasks for the range
-            for image_num in range(start, end + 1):
-                # Try common extensions
-                for ext in ['jpg', 'png', 'jpeg']:
-                    url = f"{base_pattern}{image_num}.{ext}"
-                    filename = f"page_{image_num:03d}.{ext}"
-                    filepath = str(chapter_dir / filename)
+        for chapter_num in chapters:
+            logger.info("📥 Downloading Chapter %d...", chapter_num)
 
-                    task = self.download_image(session, url, filepath, image_num)
-                    tasks.append((task, filepath, image_num))
+            chapter_info = base_series_info.copy()
+            chapter_info["chapter"] = str(chapter_num)
 
-            # Execute all downloads concurrently
-            results = await asyncio.gather(*[task for task, _, _ in tasks], return_exceptions=True)
-
-            # Process results
-            downloaded_files = []
-            successful_downloads = 0
-
-            for i, (result, filepath, image_num) in enumerate(zip(results, [t[1] for t in tasks])):
-                if isinstance(result, tuple):
-                    success, _, error = result
-                    if success:
-                        downloaded_files.append(filepath)
-                        successful_downloads += 1
-
-        total_time = time.time() - start_time
-        avg_rate = successful_downloads / total_time if total_time > 0 else 0
-
-        logger.info("✅ Batch download complete!")
-        logger.info(
-            "📊 Downloaded: %d/%d images in %.1fs (%.1f img/s)",
-            successful_downloads,
-            end - start + 1,
-            total_time,
-            avg_rate,
-        )
-
-        # Create completion marker file
-        if downloaded_files:  # Only if we actually downloaded something
-            completion_file = chapter_dir / "completed"
-            try:
-                completion_file.touch()
-                logger.info("✅ Completion marker created: %s", completion_file)
-            except Exception as e:
-                logger.warning("⚠️ Could not create completion marker: %s", e)
-
-        return downloaded_files
-
-    async def download_chapter_range(self, base_pattern_template: str, start_chapter: int, end_chapter: int, series_info: dict = None) -> Dict[int, List[str]]:
-        """
-        Download a range of chapters. Returns dict of {chapter_num: [file_paths]}.
-        base_pattern_template should have {chapter} placeholder, e.g. 'https://manga.pics/series/chapter-{chapter}/'
-        """
-        logger.info(
-            "🚀 Downloading chapters %d-%d",
-            start_chapter,
-            end_chapter,
-        )
-
-        if not series_info:
-            series_info = {'series': 'Unknown', 'chapter': str(start_chapter)}
-
-        results = {}
-
-        # Download each chapter
-        for chapter_num in range(start_chapter, end_chapter + 1):
-            logger.info("📖 Starting Chapter %d...", chapter_num)
-
-            # Create chapter-specific info
-            chapter_info = series_info.copy()
-            chapter_info['chapter'] = str(chapter_num)
-
-            # Generate pattern for this chapter
-            chapter_pattern = base_pattern_template.format(chapter=chapter_num)
-
-            try:
-                # Download this chapter
-                downloaded_files = await self.find_all_images(chapter_pattern, 0, chapter_info)
-                results[chapter_num] = downloaded_files
-
-                if downloaded_files:
-                    logger.info(
-                        "✅ Chapter %d: %d pages downloaded",
-                        chapter_num,
-                        len(downloaded_files),
-                    )
-                else:
-                    logger.warning(
-                        "❌ Chapter %d: No images found",
-                        chapter_num,
-                    )
-
-            except Exception as e:
-                logger.error("❌ Chapter %d: Error - %s", chapter_num, e)
-                results[chapter_num] = []
-
-        return results
-
-    async def download_chapters(self, current_series: str, chapters: list[int]) -> Dict[int, bool]:
-        """
-        Auto-download the next N chapters ahead of the current chapter.
-        Returns dict of {chapter_num: success_status}.
-        """
-        logger.info(
-            "🔄 Auto-downloading chapters %d",
-            ', '.join(map(str, chapters)),
-        )
-
-        results = {}
-
-        # Start downloading from the next chapter after the highest available
-        for next_chapter in chapters:
-
-            # Check if chapter already exists and is complete
-            chapter_dir = self.output_dir / current_series / f"chapter_{next_chapter}"
+            chapter_dir = self.output_dir / chapter_info["series"] / f"chapter_{chapter_num}"
             completion_marker = chapter_dir / "completed"
 
             if completion_marker.exists():
-                logger.info("✅ Chapter %d already downloaded", next_chapter)
-                results[next_chapter] = True
+                logger.info("✅ Chapter %d already downloaded", chapter_num)
+                # Collect existing files to surface consistent return data
+                image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+                existing_files = [
+                    str(path)
+                    for path in sorted(chapter_dir.iterdir())
+                    if path.is_file() and path.suffix.lower() in image_extensions
+                ]
+                results[chapter_num] = existing_files
                 continue
 
-            logger.info("📥 Downloading Chapter %d...", next_chapter)
-
-            try:
-                # Try to detect the correct URL pattern for this series
-                base_pattern = await self.detect_series_pattern(current_series, next_chapter)
-
+            # Resolve the base pattern for this chapter
+            if base_pattern_template:
+                base_pattern = base_pattern_template.format(chapter=chapter_num)
+            else:
+                base_pattern = await self.detect_series_pattern(series_name, chapter_num)
                 if not base_pattern:
-                    # Fallback to standard manga.pics pattern
-                    series_slug = current_series.lower().replace('_', '-').replace(' ', '-')
-                    base_pattern = f"https://manga.pics/{series_slug}/chapter-{next_chapter}/"
+                    series_slug = (series_name or "").lower().replace("_", "-").replace(" ", "-")
+                    base_pattern = f"https://manga.pics/{series_slug}/chapter-{chapter_num}/"
                     logger.info("🔍 Using fallback pattern: %s", base_pattern)
 
-                chapter_info = {
-                    'series': current_series,
-                    'chapter': str(next_chapter)
-                }
-
-                # Download the chapter
-                downloaded_files = await self.find_all_images(base_pattern, 0, chapter_info)
-
+            try:
+                downloaded_files = await self.find_all_images(base_pattern, start_number, chapter_info)
                 if downloaded_files:
                     logger.info(
                         "✅ Chapter %d: %d pages downloaded",
-                        next_chapter,
+                        chapter_num,
                         len(downloaded_files),
                     )
-                    results[next_chapter] = True
                 else:
-                    logger.warning(
-                        "❌ Chapter %d: No images found (might not exist yet)",
-                        next_chapter,
-                    )
-                    results[next_chapter] = False
-
+                    logger.warning("❌ Chapter %d: No images found", chapter_num)
+                results[chapter_num] = downloaded_files
             except Exception as e:
-                logger.error("❌ Chapter %d: Error - %s", next_chapter, e)
-                results[next_chapter] = False
+                logger.error("❌ Chapter %d: Error - %s", chapter_num, e)
+                results[chapter_num] = []
 
         return results
 

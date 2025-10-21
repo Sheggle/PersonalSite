@@ -588,15 +588,17 @@ class RipRavenAPI:
                     message="Starting download..."
                 )
 
+            if not chapters:
+                logger.info("ℹ️ No new chapters to queue for %s", series_name)
+                return
+
             # Download the chapters - pass max_available_chapter instead of current_chapter
-            results = await self.downloader.auto_download_next_chapters(
-                series_name, chapters,
-            )
+            results = await self.downloader.download_chapters(series_name, chapters)
 
             # Update status based on results
-            for chapter_num, success in results.items():
+            for chapter_num, files in results.items():
                 key = f"{series_name}_{chapter_num}"
-                if success:
+                if files:
                     self.download_status[key] = DownloadStatus(
                         chapter_num=chapter_num,
                         status="complete",
