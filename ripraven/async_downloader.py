@@ -280,7 +280,7 @@ class AsyncDownloader:
 
         return results
 
-    async def auto_download_next_chapters(self, current_series: str, chapters: list[int]) -> Dict[int, bool]:
+    async def download_chapters(self, current_series: str, chapters: list[int]) -> Dict[int, bool]:
         """
         Auto-download the next N chapters ahead of the current chapter.
         Returns dict of {chapter_num: success_status}.
