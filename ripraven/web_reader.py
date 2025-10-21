@@ -406,24 +406,64 @@ class RipRavenAPI:
             except (TypeError, ValueError):
                 start_num = 0
 
-            downloaded_files = await self.downloader.find_all_images(base_pattern, start_num, chapter_info)
+            # Build a template that can cover the requested chapter and the following one
+            base_template = self._build_chapter_pattern_template(base_pattern, chapter_num)
 
-            if downloaded_files:
-                logger.info(
-                    "✅ Successfully imported %s Chapter %d: %d pages",
-                    series_name,
-                    chapter_num,
-                    len(downloaded_files),
-                )
-            else:
-                logger.warning(
-                    "❌ No images found for %s Chapter %d",
-                    series_name,
-                    chapter_num,
-                )
+            results = await self.downloader.download_chapters(
+                series_name,
+                [chapter_num, chapter_num + 1],
+                base_pattern_template=base_template,
+                series_info=chapter_info,
+                start_number=start_num,
+            )
+
+            for num in (chapter_num, chapter_num + 1):
+                files = results.get(num, [])
+                if files:
+                    logger.info(
+                        "✅ Successfully imported %s Chapter %d: %d pages",
+                        series_name,
+                        num,
+                        len(files),
+                    )
+                else:
+                    logger.warning(
+                        "❌ No images found for %s Chapter %d",
+                        series_name,
+                        num,
+                    )
 
         except Exception:
             logger.exception("❌ Background download error for %s", series_name)
+
+    def _build_chapter_pattern_template(self, base_pattern: str, chapter_num: int) -> str:
+        """
+        Build a reusable chapter pattern template with a {chapter} placeholder.
+        Falls back to the original base pattern when no substitution is possible.
+        """
+        stripped = base_pattern.rstrip('/')
+        match = re.search(r'(\d+)$', stripped)
+
+        if match:
+            start, end = match.span(1)
+            digits = stripped[start:end]
+
+            try:
+                if int(digits) == int(chapter_num):
+                    if digits.startswith('0') and len(digits) > 1:
+                        placeholder = f"{{chapter:0{len(digits)}d}}"
+                    else:
+                        placeholder = "{chapter}"
+
+                    suffix = "/" if base_pattern.endswith("/") else ""
+                    template = f"{stripped[:start]}{placeholder}{stripped[end:]}{suffix}"
+                    logger.debug("🔧 Derived chapter template: %s", template)
+                    return template
+            except ValueError:
+                pass
+
+        logger.debug("⚠️ Could not derive template from %s, using original pattern", base_pattern)
+        return base_pattern
 
     def scan_series(self) -> List[SeriesInfo]:
         """Scan downloads directory for available series."""
