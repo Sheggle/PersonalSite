@@ -166,7 +166,6 @@
           📚 Loading RipRaven Comic Reader...
         </div>
         <iframe
-          src="/api/ripraven/"
           class="ripraven-iframe"
           id="ripravenIframe"
           title="RipRaven Comic Reader"
@@ -174,12 +173,35 @@
           allowfullscreen
           loading="lazy"
           onload="hideLoadingIndicator()">
-          <p>Your browser doesn't support iframes. Please <a href="/api/ripraven/" target="_blank">open RipRaven in a new tab</a>.</p>
+          <p>Your browser doesn't support iframes. Please <a id="ripravenFallbackLink" href="/api/ripraven/" target="_blank">open RipRaven in a new tab</a>.</p>
         </iframe>
       </div>
 
     </main>
     <script>
+      const supportedLocalHosts = new Set(['127.0.0.1', 'localhost']);
+      const ripravenBasePath = '/api/ripraven/';
+      const isLocalHost = supportedLocalHosts.has(window.location.hostname);
+      const localBackendOrigin = `http://${window.location.hostname}:8000`;
+      const ripravenUrl = `${isLocalHost ? localBackendOrigin : ''}${ripravenBasePath}`;
+
+      const iframeElement = document.getElementById('ripravenIframe');
+      const fallbackLink = document.getElementById('ripravenFallbackLink');
+
+      if (iframeElement) {
+        iframeElement.src = ripravenUrl;
+      }
+      if (fallbackLink) {
+        fallbackLink.href = ripravenUrl;
+      }
+
+      function updateLoadingMessage(message) {
+        const loadingElement = document.getElementById('iframeLoading');
+        if (loadingElement) {
+          loadingElement.innerHTML = message;
+        }
+      }
+
       function hideLoadingIndicator() {
         const loadingElement = document.getElementById('iframeLoading');
         if (loadingElement) {
@@ -188,18 +210,17 @@
       }
 
       // Show loading indicator on iframe error
-      document.getElementById('ripravenIframe').addEventListener('error', function() {
-        const loadingElement = document.getElementById('iframeLoading');
-        if (loadingElement) {
-          loadingElement.innerHTML = '⚠️ Failed to load RipRaven. <a href="/api/ripraven/" target="_blank" style="color: #58a6ff;">Open in new tab</a>';
-        }
-      });
+      if (iframeElement) {
+        iframeElement.addEventListener('error', function() {
+          updateLoadingMessage(`⚠️ Failed to load RipRaven. <a href="${ripravenUrl}" target="_blank" style="color: #58a6ff;">Open in new tab</a>`);
+        });
+      }
 
       // Timeout fallback for slow loading
       setTimeout(function() {
         const loadingElement = document.getElementById('iframeLoading');
         if (loadingElement && loadingElement.style.display !== 'none') {
-          loadingElement.innerHTML = '⏱️ Taking longer than expected... <a href="/api/ripraven/" target="_blank" style="color: #58a6ff;">Open in new tab</a>';
+          updateLoadingMessage(`⏱️ Taking longer than expected... <a href="${ripravenUrl}" target="_blank" style="color: #58a6ff;">Open in new tab</a>`);
         }
       }, 10000); // 10 second timeout
     </script>

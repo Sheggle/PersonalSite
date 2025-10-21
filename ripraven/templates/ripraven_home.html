@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RipRaven Library</title>
+    <link rel="stylesheet" href="/ripraven/static/styles.css">
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial;
+      }
+      body {
+        margin: 0;
+        background: #1a1a1a;
+        color: #ffffff;
+      }
+      header {
+        padding: 2.5rem 1.5rem 1.5rem;
+        text-align: center;
+        background: #2d2d2d;
+        border-bottom: 2px solid #ff6b35;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+      }
+      header h1 {
+        margin: 0 0 0.5rem;
+        font-size: clamp(2rem, 4vw, 2.8rem);
+        color: #ff6b35;
+      }
+      header p {
+        margin: 0;
+        color: #cccccc;
+        font-size: 1rem;
+      }
+      main {
+        max-width: 960px;
+        margin: 2rem auto 4rem;
+        padding: 0 1.5rem;
+      }
+      .series-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1.5rem;
+        margin-top: 2rem;
+      }
+      .card {
+        padding: 1.25rem;
+        background: #2d2d2d;
+        border: 1px solid #555;
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .card:hover {
+        transform: translateY(-2px);
+        border-color: #ff6b35;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+      }
+      .card h2 {
+        margin: 0;
+        font-size: 1.2rem;
+        color: #ff6b35;
+      }
+      .meta {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        color: #cccccc;
+        font-size: 0.95rem;
+      }
+      .meta span {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .actions a {
+        text-decoration: none;
+        padding: 0.5rem 0.85rem;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        background: #ff6b35;
+        color: #fff;
+        transition: background 0.15s ease;
+      }
+      .actions a.secondary {
+        background: transparent;
+        border: 1px solid #555;
+        color: #ffffff;
+      }
+      .actions a:hover {
+        background: #e55a2b;
+      }
+      .actions a.secondary:hover {
+        border-color: #ff6b35;
+        color: #ff6b35;
+      }
+      .resume-placeholder {
+        color: #7d8590;
+        font-size: 0.9rem;
+        padding: 0.45rem 0.6rem;
+      }
+      .select-wrapper {
+        min-width: 160px;
+      }
+      .select-wrapper select {
+        width: 100%;
+        padding: 0.5rem 0.7rem;
+        border-radius: 8px;
+        border: 1px solid #555;
+        background: #3d3d3d;
+        color: #ffffff;
+        font-size: 0.95rem;
+      }
+      .select-wrapper select:focus {
+        outline: none;
+        border-color: #ff6b35;
+      }
+      .empty {
+        margin: 4rem auto;
+        padding: 2rem;
+        text-align: center;
+        background: #2d2d2d;
+        border: 1px dashed #555;
+        border-radius: 12px;
+        color: #cccccc;
+      }
+      footer {
+        text-align: center;
+        padding: 2rem 1rem;
+        color: #7d8590;
+        font-size: 0.9rem;
+      }
+      /* Import section styles */
+      .import-section {
+        background: #333333;
+        border: 1px solid #555;
+        border-radius: 6px;
+        padding: 1rem;
+        margin: 2rem 0;
+      }
+      .import-section h2 {
+        color: #ff6b35;
+        margin: 0 0 1rem;
+        font-size: 1.3rem;
+      }
+      .import-form {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      input[type="url"] {
+        flex: 1;
+        background: #3d3d3d;
+        color: #ffffff;
+        border: 1px solid #555;
+        padding: 0.5rem;
+        border-radius: 4px;
+        min-width: 300px;
+      }
+      input[type="url"]:focus {
+        outline: none;
+        border-color: #ff6b35;
+      }
+      input[type="url"]::placeholder {
+        color: #888;
+      }
+      button {
+        background: #ff6b35;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background-color 0.2s;
+      }
+      button:hover {
+        background: #e55a2b;
+      }
+      button:disabled {
+        background: #666;
+        cursor: not-allowed;
+      }
+      .import-status {
+        color: #cccccc;
+        font-style: italic;
+        margin-top: 0.5rem;
+      }
+      @media (max-width: 600px) {
+        header {
+          padding: 2rem 1rem 1.25rem;
+        }
+        .actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .actions a {
+          text-align: center;
+        }
+        .import-form {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        input[type="url"] {
+          min-width: unset;
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>RipRaven Library</h1>
+      <p>Select a series to jump straight into the reader or browse recent chapters.</p>
+    </header>
+    <main>
+      <!-- Import New Manga Section -->
+      <div class="import-section">
+        <h2>📥 Import New Manga</h2>
+        <div class="import-form">
+          <input
+            type="url"
+            id="mangaUrl"
+            placeholder="Paste RavenScans URL (e.g., https://ravenscans.com/manga-name-chapter-1/)"
+            value=""
+          />
+          <button id="importBtn" onclick="importManga()">Import</button>
+        </div>
+        <div class="import-status" id="importStatus"></div>
+      </div>
+
+      <section id="seriesSection">
+        <div id="seriesGrid" class="series-grid"></div>
+        <div id="emptyState" class="empty" style="display: none;">
+          No downloads found yet. Import a manga using the form above.
+        </div>
+      </section>
+    </main>
+    <footer>Tip: bookmark the chapter links to resume where you left off.</footer>
+    <script>
+      async function loadSeries() {
+        const grid = document.getElementById('seriesGrid');
+        const emptyState = document.getElementById('emptyState');
+        grid.innerHTML = '';
+
+        try {
+          const [seriesRes, recentRes] = await Promise.all([
+            fetch('/api/ripraven/series'),
+            fetch('/api/ripraven/recent')
+          ]);
+
+          if (!seriesRes.ok) {
+            throw new Error('Failed to fetch series');
+          }
+          const series = await seriesRes.json();
+          const recent = recentRes.ok ? await recentRes.json() : [];
+
+          const resumeMap = new Map();
+          recent.forEach((entry) => {
+            const chapterNum = parseInt(String(entry.chapter).replace('chapter_', ''), 10);
+            if (!Number.isFinite(chapterNum)) {
+              return;
+            }
+            resumeMap.set(entry.series, { chapter: chapterNum });
+          });
+
+          if (!series.length) {
+            emptyState.style.display = '';
+            return;
+          }
+
+          emptyState.style.display = 'none';
+
+          series.forEach((item) => {
+            const resume = resumeMap.get(item.name) || null;
+            const encodedSeries = encodeURIComponent(item.name);
+
+            const card = document.createElement('article');
+            card.className = 'card';
+            card.innerHTML = `
+              <h2>${item.name}</h2>
+              <div class="meta">
+                <span>📚 ${item.chapters.length} chapter${item.chapters.length === 1 ? '' : 's'}</span>
+                ${resume ? `<span>⏱️ Last read: Chapter ${resume.chapter}</span>` : ''}
+              </div>
+            `;
+
+            const actions = document.createElement('div');
+            actions.className = 'actions';
+
+            if (resume) {
+              const resumeLink = document.createElement('a');
+              resumeLink.textContent = `Resume Chapter ${resume.chapter}`;
+              resumeLink.href = `/ripraven/${encodedSeries}?chapter=${resume.chapter}`;
+              actions.appendChild(resumeLink);
+            } else {
+              const resumePlaceholder = document.createElement('div');
+              resumePlaceholder.className = 'resume-placeholder';
+              resumePlaceholder.textContent = 'No reading progress yet';
+              actions.appendChild(resumePlaceholder);
+            }
+
+            const selectWrap = document.createElement('div');
+            selectWrap.className = 'select-wrapper';
+            const selector = document.createElement('select');
+            selector.innerHTML = '<option value="">Jump to chapter…</option>';
+            item.chapters.forEach((chapter) => {
+              const chapterNum = parseInt(String(chapter.name).replace('chapter_', ''), 10);
+              if (!Number.isFinite(chapterNum)) {
+                return;
+              }
+              const option = document.createElement('option');
+              option.value = chapterNum;
+              option.textContent = `Chapter ${chapterNum}`;
+              selector.appendChild(option);
+            });
+            selector.addEventListener('change', (event) => {
+              const chapterValue = parseInt(event.target.value, 10);
+              if (!Number.isFinite(chapterValue)) {
+                return;
+              }
+              window.location.href = `/ripraven/${encodedSeries}?chapter=${chapterValue}`;
+            });
+            selectWrap.appendChild(selector);
+            actions.appendChild(selectWrap);
+
+            card.appendChild(actions);
+            grid.appendChild(card);
+          });
+        } catch (error) {
+          console.error('Error loading series:', error);
+          emptyState.style.display = '';
+          emptyState.textContent = 'Unable to load series. Please try again later.';
+        }
+      }
+
+      // Import manga functionality
+      async function importManga() {
+        const urlInput = document.getElementById("mangaUrl");
+        const statusDiv = document.getElementById("importStatus");
+        const importBtn = document.getElementById("importBtn");
+
+        const url = urlInput.value.trim();
+        if (!url) {
+          statusDiv.textContent = "Please enter a URL";
+          statusDiv.style.color = "#ff6b6b";
+          return;
+        }
+
+        importBtn.disabled = true;
+        importBtn.textContent = "Importing...";
+        statusDiv.textContent = "Starting import...";
+        statusDiv.style.color = "#cccccc";
+
+        try {
+          const response = await fetch("/api/ripraven/import-manga", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url: url }),
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            statusDiv.textContent = `✅ ${result.message}`;
+            statusDiv.style.color = "#4caf50";
+            urlInput.value = "";
+            // Reload series after successful import
+            setTimeout(() => {
+              loadSeries();
+              statusDiv.textContent = "";
+            }, 2000);
+          } else {
+            statusDiv.textContent = `❌ ${result.detail || "Import failed"}`;
+            statusDiv.style.color = "#ff6b6b";
+          }
+        } catch (error) {
+          console.error("Import error:", error);
+          statusDiv.textContent = `❌ Error: ${error.message}`;
+          statusDiv.style.color = "#ff6b6b";
+        } finally {
+          importBtn.disabled = false;
+          importBtn.textContent = "Import";
+        }
+      }
+
+      // Allow Enter key to trigger import
+      document.getElementById("mangaUrl").addEventListener("keypress", function(e) {
+        if (e.key === "Enter") {
+          importManga();
+        }
+      });
+
+      loadSeries();
+    </script>
+  </body>
+</html>

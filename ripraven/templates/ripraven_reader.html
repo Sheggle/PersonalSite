@@ -1,0 +1,82 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔥 RipRaven Comic Reader</title>
+    <link rel="stylesheet" href="/ripraven/static/styles.css">
+</head>
+<body>
+    <div class="header">
+        <button
+            class="header-toggle"
+            id="headerToggle"
+            type="button"
+            aria-expanded="true"
+            aria-controls="headerContent"
+        >
+            Hide Header
+        </button>
+        <div class="header-content" id="headerContent">
+            <h1>🔥 RipRaven Comic Reader</h1>
+            <div class="controls">
+                <div class="control-group">
+                    <label for="seriesSelect">Series:</label>
+                    <select id="seriesSelect">
+                        <option value="">Loading...</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="chapterSelect">Chapter:</label>
+                    <select id="chapterSelect" disabled>
+                        <option value="">Select series first</option>
+                    </select>
+                </div>
+                <div class="status" id="status">
+                    Loading series...
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <div id="recentSection" class="recent-section" style="display: none;">
+        <div class="recent-title">📖 Recently Read</div>
+        <div class="recent-list" id="recentList"></div>
+    </div>
+
+    <!-- Floating Chapter Indicator -->
+    <div id="chapterIndicator" class="chapter-indicator hidden">
+        Chapter 1
+    </div>
+
+    <!-- Download Status Indicator -->
+    <div id="downloadStatus" class="download-status hidden">
+        <div id="downloadText">Downloading chapters...</div>
+        <div class="download-progress">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="comicContainer" class="comic-container">
+        <div class="empty-state">
+            <h2>Welcome to RipRaven Comic Reader</h2>
+            <p>Select a series and chapter from the dropdowns above to start reading.</p>
+            <p>📚 Use the vertical scroll to read through pages continuously.</p>
+            <p>🔄 Multiple chapters will load seamlessly for infinite reading!</p>
+        </div>
+    </div>
+
+    <script src="/ripraven/static/utils.js"></script>
+    <script src="/ripraven/static/navigation-manager.js"></script>
+    <script src="/ripraven/static/api-client.js"></script>
+    <script src="/ripraven/static/state-manager.js"></script>
+    <script src="/ripraven/static/ui-controller.js"></script>
+    <script src="/ripraven/static/chapter-renderer.js"></script>
+    <script src="/ripraven/static/comic-reader.js"></script>
+</body>
+</html>
+        

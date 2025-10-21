@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from logging_utils import get_logger
+from .logging_utils import get_logger
 
 logger = get_logger(__name__)
 

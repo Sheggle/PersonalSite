@@ -1,15 +1,17 @@
 # Sheggle Starter
 
 Minimal starter for sheggle.com:
-- `backend/app.py` — FastAPI with `/api/health`
+- `backend/app.py` — FastAPI with `/api/health` and the `/api/ripraven` integration
 - `frontend/index.html`, `frontend/styles.css` — static site hitting the backend
+- `ripraven/` — packaged comic reader mounted under `/api/ripraven`
 
 ## Local dev
 ```bash
 uv sync
 uv run uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
-python3 -m http.server 8080 -d frontend
-# visit http://localhost:8080 (it will call http://localhost:8000/api/health; adjust if needed)
+# visit http://127.0.0.1:8000/ (serves the frontend and backend from one process)
+# RipRaven library: http://127.0.0.1:8000/ripraven
+# Reader deep link: http://127.0.0.1:8000/ripraven/<series>/<chapter>
 ```
 
 ## Server layout (recommended)

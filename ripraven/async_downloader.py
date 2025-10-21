@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import aiofiles
 import aiohttp
 
-from logging_utils import get_logger
+from .logging_utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -293,7 +293,7 @@ class AsyncDownloader:
         )
 
         # Extract series info for pattern generation
-        from pattern_finder import PatternFinder
+        from .pattern_finder import PatternFinder
         finder = PatternFinder()
 
         results = {}
@@ -362,7 +362,7 @@ class AsyncDownloader:
                 chapter_dir = self.output_dir / series_name / f"chapter_{existing_chapter}"
                 if chapter_dir.exists():
                     # Try to find pattern from existing downloads or use PatternFinder
-                    from pattern_finder import PatternFinder
+                    from .pattern_finder import PatternFinder
                     finder = PatternFinder()
 
                     # Generate likely RavenScans URL for this series/chapter
