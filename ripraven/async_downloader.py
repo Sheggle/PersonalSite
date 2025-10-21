@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import aiofiles
 import aiohttp
@@ -280,26 +280,20 @@ class AsyncDownloader:
 
         return results
 
-    async def auto_download_next_chapters(self, current_series: str, max_available_chapter: int, ahead_count: int = 3) -> Dict[int, bool]:
+    async def auto_download_next_chapters(self, current_series: str, chapters: list[int]) -> Dict[int, bool]:
         """
-        Auto-download the next N chapters ahead of the highest available chapter.
+        Auto-download the next N chapters ahead of the current chapter.
         Returns dict of {chapter_num: success_status}.
         """
         logger.info(
-            "🔄 Auto-downloading %d chapters ahead of highest available Chapter %d",
-            ahead_count,
-            max_available_chapter,
+            "🔄 Auto-downloading chapters %d",
+            ', '.join(map(str, chapters)),
         )
-
-        # Extract series info for pattern generation
-        from .pattern_finder import PatternFinder
-        finder = PatternFinder()
 
         results = {}
 
         # Start downloading from the next chapter after the highest available
-        for i in range(1, ahead_count + 1):
-            next_chapter = max_available_chapter + i
+        for next_chapter in chapters:
 
             # Check if chapter already exists and is complete
             chapter_dir = self.output_dir / current_series / f"chapter_{next_chapter}"
@@ -406,37 +400,3 @@ class AsyncDownloader:
             "complete": completion_marker.exists(),
             "page_count": len(image_files)
         }
-
-
-def main():
-    """Test the async downloader."""
-    import sys
-
-    if len(sys.argv) < 2:
-        logger.error("Usage: python async_downloader.py <base_pattern> [start_number]")
-        logger.info(
-            "Example: python async_downloader.py https://manga.pics/call-of-the-spear/chapter-1/ 0"
-        )
-        return
-
-    base_pattern = sys.argv[1]
-    start_number = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-
-    chapter_info = {
-        'series': 'Test Series',
-        'chapter': '1'
-    }
-
-    async def run_download():
-        downloader = AsyncDownloader(max_concurrent=30)
-        files = await downloader.find_all_images(base_pattern, start_number, chapter_info)
-        logger.info("Downloaded files:")
-        for i, filepath in enumerate(files, 1):
-            filename = filepath.split('/')[-1]
-            logger.info("%2d. %s", i, filename)
-
-    asyncio.run(run_download())
-
-
-if __name__ == "__main__":
-    main()

@@ -58,7 +58,7 @@ class InfiniteChapterData(BaseModel):
 
 class InfiniteChaptersResponse(BaseModel):
     series: str
-    starting_chapter: int
+    current_chapter: int
     chapters: List[InfiniteChapterData]
     total_pages: int
     download_status: Dict[str, str]  # {"chapter_2": "downloading", "chapter_3": "complete", etc.}
@@ -252,13 +252,13 @@ class RipRavenAPI:
                 logger.exception("❌ Import error")
                 raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
-        @self.router.get("/infinite-chapters/{series_name}/{starting_chapter}", response_model=InfiniteChaptersResponse)
-        async def get_infinite_chapters(series_name: str, starting_chapter: int, background_tasks: BackgroundTasks):
+        @self.router.get("/infinite-chapters/{series_name}/{current_chapter}", response_model=InfiniteChaptersResponse)
+        async def get_infinite_chapters(series_name: str, current_chapter: int, background_tasks: BackgroundTasks):
             """Get multiple chapters for infinite scroll reading with auto-download."""
             logger.debug(
                 "🔍 Starting infinite chapters request: series=%s, chapter=%d",
                 series_name,
-                starting_chapter,
+                current_chapter,
             )
 
             try:
@@ -275,8 +275,8 @@ class RipRavenAPI:
                 logger.debug("🔍 Downloader available, checking chapters...")
 
                 # Check which chapters are available (current + next 3)
-                for i in range(4):  # chapters 0, 1, 2, 3 relative to starting
-                    chapter_num = starting_chapter + i
+                for i in range(2):  # chapters 0, 1 relative to starting
+                    chapter_num = current_chapter + i
                     logger.debug("🔍 Checking chapter %d...", chapter_num)
 
                     try:
@@ -315,45 +315,24 @@ class RipRavenAPI:
 
                 logger.debug("🔍 Found %d chapters, checking if more downloads needed...", len(chapters_data))
 
-                # Sliding window logic: Always ensure we have 3 chapters ahead of the highest available
-                # Find the highest chapter number we have
-                max_available_chapter = max([ch.chapter_num for ch in chapters_data]) if chapters_data else starting_chapter - 1
-
-                # Calculate what chapters we should have (starting_chapter + next 6 for wider buffer)
-                target_chapters = list(range(starting_chapter, starting_chapter + 7))
-                missing_chapters = []
-
-                for target_chapter in target_chapters:
-                    chapter_exists = any(ch.chapter_num == target_chapter for ch in chapters_data)
-                    if not chapter_exists:
-                        missing_chapters.append(target_chapter)
-
-                logger.debug("🔍 Max available chapter: %s", max_available_chapter)
-                logger.debug("🔍 Target chapters: %s", target_chapters)
-                logger.debug("🔍 Missing chapters: %s", missing_chapters)
-
-                # Always trigger background download if we have missing chapters
-                if missing_chapters:
-                    try:
-                        # Pass the highest available chapter so downloads start from the right point
-                        background_tasks.add_task(
-                            self.trigger_background_download,
-                            series_name,
-                            max_available_chapter
-                        )
-                        logger.debug(
-                            "🔍 Background download task added for chapters beyond %s",
-                            max_available_chapter,
-                        )
-                    except Exception as e:
-                        logger.exception("❌ Error adding background task")
-                else:
-                    logger.debug("🔍 No missing chapters, no download needed")
+                try:
+                    # Pass the highest available chapter so downloads start from the right point
+                    background_tasks.add_task(
+                        self.trigger_background_download,
+                        series_name,
+                        current_chapter,
+                    )
+                    logger.debug(
+                        "🔍 Background download task added for chapters beyond %s",
+                        current_chapter,
+                    )
+                except Exception as e:
+                    logger.exception("❌ Error adding background task")
 
                 logger.debug("🔍 Creating response...")
                 response = InfiniteChaptersResponse(
                     series=series_name,
-                    starting_chapter=starting_chapter,
+                    current_chapter=current_chapter,
                     chapters=chapters_data,
                     total_pages=total_pages,
                     download_status=download_status
@@ -578,24 +557,28 @@ class RipRavenAPI:
         except Exception as e:
             logger.error("Error saving recent chapters: %s", e)
 
-    async def trigger_background_download(self, series_name: str, starting_chapter: int):
+    async def trigger_background_download(self, series_name: str, current_chapter: int):
         """Trigger background download of next chapters."""
         try:
             logger.info(
                 "🔄 Starting background download for %s chapters %d-%d",
                 series_name,
-                starting_chapter + 1,
-                starting_chapter + 3,
+                current_chapter + 1,
+                current_chapter + 3,
             )
+
+            chapters: list[int] = []
 
             # Update download status
             for i in range(1, 4):  # chapters +1, +2, +3
-                chapter_num = starting_chapter + i
+                chapter_num = current_chapter + i
                 key = f"{series_name}_{chapter_num}"
 
                 # Check if already downloading or complete
                 if key in self.download_status:
                     continue
+
+                chapters.append(chapter_num)
 
                 # Mark as downloading
                 self.download_status[key] = DownloadStatus(
@@ -605,9 +588,9 @@ class RipRavenAPI:
                     message="Starting download..."
                 )
 
-            # Download the chapters - pass max_available_chapter instead of starting_chapter
+            # Download the chapters - pass max_available_chapter instead of current_chapter
             results = await self.downloader.auto_download_next_chapters(
-                series_name, starting_chapter, ahead_count=3
+                series_name, chapters,
             )
 
             # Update status based on results
@@ -634,7 +617,7 @@ class RipRavenAPI:
             logger.exception("❌ Background download error for %s", series_name)
             # Mark failed chapters
             for i in range(1, 4):
-                chapter_num = starting_chapter + i
+                chapter_num = current_chapter + i
                 key = f"{series_name}_{chapter_num}"
                 self.download_status[key] = DownloadStatus(
                     chapter_num=chapter_num,

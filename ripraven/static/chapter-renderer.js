@@ -6,7 +6,7 @@ const ChapterRenderer = {
     chapterObserver: null,
     isInitialSetup: false,
     chapterBoundaries: [],
-    contentPollingInterval: null,
+    isLoadingNextChapters: false,
 
     /**
      * Initialize the chapter renderer
@@ -14,7 +14,6 @@ const ChapterRenderer = {
     init: function(comicContainer) {
         this.comicContainer = comicContainer;
         this.setupScrollTracking();
-        this.setupContentPolling();
     },
 
     /**
@@ -54,10 +53,7 @@ const ChapterRenderer = {
                     this.saveReadingProgress();
 
                     // Check for new content if at frontier
-                    const maxLoadedChapter = window.RipRaven.StateManager ? window.RipRaven.StateManager.maxLoadedChapter : null;
-                    if (maxLoadedChapter !== null && chapterNum >= maxLoadedChapter) {
-                        this.checkForNewContent();
-                    }
+                    this.checkForNewContent(chapterNum);
                 }
             });
         }, {
@@ -243,34 +239,27 @@ const ChapterRenderer = {
     },
 
     /**
-     * Setup periodic content polling
-     */
-    setupContentPolling: function() {
-        // Poll every 3 seconds for new content when actively reading
-        this.contentPollingInterval = setInterval(async () => {
-            await this.checkForNewContent();
-        }, 3000);
-    },
-
-    /**
      * Check for new content and inject if available
      */
-    checkForNewContent: async function() {
+    checkForNewContent: async function(chapterNum) {
         if (!window.RipRaven.StateManager || !window.RipRaven.APIClient) {
             return;
         }
 
         const currentSeries = window.RipRaven.StateManager.getCurrentSeries();
-        const currentStartChapter = window.RipRaven.StateManager.getCurrentStartChapter();
 
-        if (!currentSeries || currentStartChapter === undefined || currentStartChapter === null) {
+        if (!currentSeries || chapterNum === undefined || chapterNum === null) {
             return;
         }
 
+        if (this.isLoadingNextChapters) {
+            return;
+        }
+
+        this.isLoadingNextChapters = true;
+
         try {
-            // Check if new chapters are available - start from next chapter after max loaded
-            const nextChapterToLoad = (window.RipRaven.StateManager.maxLoadedChapter || 0) + 1;
-            const newData = await window.RipRaven.APIClient.loadInfiniteChapters(currentSeries, nextChapterToLoad);
+            const newData = await window.RipRaven.APIClient.loadInfiniteChapters(currentSeries, chapterNum);
 
             const currentMax = window.RipRaven.StateManager.maxLoadedChapter || 0;
             const chaptersToAppend = newData.chapters.filter(ch => ch.chapter_num > currentMax);
@@ -280,6 +269,8 @@ const ChapterRenderer = {
             }
         } catch (error) {
             console.error('Error checking for new content:', error);
+        } finally {
+            this.isLoadingNextChapters = false;
         }
     },
 
@@ -339,14 +330,9 @@ const ChapterRenderer = {
     },
 
     /**
-     * Cleanup - stop polling and observers
+     * Cleanup - stop observers and reset state
      */
     cleanup: function() {
-        if (this.contentPollingInterval) {
-            clearInterval(this.contentPollingInterval);
-            this.contentPollingInterval = null;
-        }
-
         if (this.chapterObserver) {
             this.chapterObserver.disconnect();
             this.chapterObserver = null;
