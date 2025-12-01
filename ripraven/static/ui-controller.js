@@ -236,7 +236,8 @@ const UIController = {
                 item.className = 'recent-item';
                 const chapterNum = window.RipRaven.parseChapterNumber(recent.chapter);
                 const safeChapter = chapterNum || 1;
-                item.textContent = `${recent.series} · Chapter ${safeChapter}`;
+                const seriesName = recent.series.length > 30 ? recent.series.slice(0, 30) + '...' : recent.series;
+                item.textContent = `${seriesName} · Chapter ${safeChapter}`;
                 item.addEventListener('click', () => {
                     this.loadRecentChapter(recent.series, safeChapter);
                 });
