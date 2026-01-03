@@ -33,15 +33,15 @@ class PatternFinder:
             html_content = response.text
 
             # Try RavenScans CDN first (new format)
-            # Pattern: https://cdn2.ravenscans.org/SERIES_NAME/chapter-N/NUMBER.jpg
-            cdn_pattern = r'https://cdn2\.ravenscans\.org/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
+            # Pattern: https://cdnN.ravenscans.org/SERIES_NAME/chapter-N/NUMBER.jpg
+            cdn_pattern = r'https://(cdn\d+)\.ravenscans\.org/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
             matches = re.findall(cdn_pattern, html_content)
 
             if matches:
-                series_path, chapter_path, image_num = matches[0]
-                base_pattern = f"https://cdn2.ravenscans.org/{series_path}/{chapter_path}/"
+                cdn_host, series_path, chapter_path, image_num = matches[0]
+                base_pattern = f"https://{cdn_host}.ravenscans.org/{series_path}/{chapter_path}/"
 
-                image_numbers = [int(match[2]) for match in matches]
+                image_numbers = [int(match[3]) for match in matches]
                 start_number = min(image_numbers)
 
                 logger.info("✅ Found CDN pattern: %s", base_pattern)
@@ -72,12 +72,12 @@ class PatternFinder:
             logger.info("🔍 No direct image URLs found, trying alternative detection...")
 
             # Look for any CDN references
-            alt_cdn_pattern = r'cdn2\.ravenscans\.org/([^/\s"\']+)/([^/\s"\']+)'
+            alt_cdn_pattern = r'(cdn\d+)\.ravenscans\.org/([^/\s"\']+)/([^/\s"\']+)'
             alt_matches = re.findall(alt_cdn_pattern, html_content)
 
             if alt_matches:
-                series_path, chapter_path = alt_matches[0]
-                base_pattern = f"https://cdn2.ravenscans.org/{series_path}/{chapter_path}/"
+                cdn_host, series_path, chapter_path = alt_matches[0]
+                base_pattern = f"https://{cdn_host}.ravenscans.org/{series_path}/{chapter_path}/"
 
                 start_number = self._detect_start_number(base_pattern)
 
@@ -197,12 +197,12 @@ class PatternFinder:
         Parse a direct RavenScans CDN URL to extract the pattern.
         Example: https://cdn2.ravenscans.org/the-eternal-supreme/chapter-469/5.jpg
         """
-        pattern = r'https://cdn2\.ravenscans\.org/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
+        pattern = r'https://(cdn\d+)\.ravenscans\.org/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
         match = re.match(pattern, url)
 
         if match:
-            series_path, chapter_path, _ = match.groups()
-            base_pattern = f"https://cdn2.ravenscans.org/{series_path}/{chapter_path}/"
+            cdn_host, series_path, chapter_path, _ = match.groups()
+            base_pattern = f"https://{cdn_host}.ravenscans.org/{series_path}/{chapter_path}/"
 
             start_number = self._detect_start_number(base_pattern)
 
@@ -215,10 +215,12 @@ class PatternFinder:
         Compatibility helper that returns a unified payload containing the base pattern,
         detected start number, and chapter metadata for a given RavenScans, CDN, or manga.pics URL.
         """
-        if 'ravenscans.org' in url and 'cdn2.ravenscans.org' not in url:
-            result = self.extract_from_ravenscans(url)
-        elif 'cdn2.ravenscans.org' in url:
+        # Check for CDN URLs first (cdn2, cdn3, etc.)
+        cdn_match = re.search(r'cdn\d+\.ravenscans\.org', url)
+        if cdn_match:
             result = self.parse_direct_cdn_url(url)
+        elif 'ravenscans.org' in url:
+            result = self.extract_from_ravenscans(url)
         elif 'manga.pics' in url:
             result = self.parse_direct_manga_pics_url(url)
         else:
@@ -263,10 +265,12 @@ def main():
     url = sys.argv[1]
     finder = PatternFinder()
 
-    if 'ravenscans.org' in url and 'cdn2.ravenscans.org' not in url:
-        result = finder.extract_from_ravenscans(url)
-    elif 'cdn2.ravenscans.org' in url:
+    # Check for CDN URLs first (cdn2, cdn3, etc.)
+    cdn_match = re.search(r'cdn\d+\.ravenscans\.org', url)
+    if cdn_match:
         result = finder.parse_direct_cdn_url(url)
+    elif 'ravenscans.org' in url:
+        result = finder.extract_from_ravenscans(url)
     elif 'manga.pics' in url:
         result = finder.parse_direct_manga_pics_url(url)
     else:
