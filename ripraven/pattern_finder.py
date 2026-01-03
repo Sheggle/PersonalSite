@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pattern Finder - Extract manga.pics URL patterns from RavenScans pages
+Pattern Finder - Extract image URL patterns from RavenScans pages
 """
 
 import logging
@@ -22,7 +22,7 @@ class PatternFinder:
 
     def extract_from_ravenscans(self, url: str) -> Optional[Tuple[str, int]]:
         """
-        Extract manga.pics pattern from RavenScans URL.
+        Extract image URL pattern from RavenScans URL.
         Returns (base_pattern, start_number) or None if not found.
         """
         logger.info("🔍 Analyzing RavenScans page: %s", url)
@@ -32,29 +32,59 @@ class PatternFinder:
             response.raise_for_status()
             html_content = response.text
 
-            # Look for manga.pics URLs in the HTML
-            # Pattern: https://manga.pics/SERIES_NAME/chapter-N/NUMBER.jpg
-            manga_pics_pattern = r'https://manga\.pics/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
-
-            matches = re.findall(manga_pics_pattern, html_content)
+            # Try RavenScans CDN first (new format)
+            # Pattern: https://cdn2.ravenscans.org/SERIES_NAME/chapter-N/NUMBER.jpg
+            cdn_pattern = r'https://cdn2\.ravenscans\.org/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
+            matches = re.findall(cdn_pattern, html_content)
 
             if matches:
-                # Get the first match to determine the pattern
                 series_path, chapter_path, image_num = matches[0]
-                base_pattern = f"https://manga.pics/{series_path}/{chapter_path}/"
+                base_pattern = f"https://cdn2.ravenscans.org/{series_path}/{chapter_path}/"
 
-                # Find the minimum image number to determine start
                 image_numbers = [int(match[2]) for match in matches]
                 start_number = min(image_numbers)
 
-                logger.info("✅ Found pattern: %s", base_pattern)
+                logger.info("✅ Found CDN pattern: %s", base_pattern)
+                logger.info("📍 Starting number: %d", start_number)
+                logger.info("🔢 Found %d unique image numbers", len(set(image_numbers)))
+
+                return base_pattern, start_number
+
+            # Fallback to manga.pics URLs (legacy format)
+            # Pattern: https://manga.pics/SERIES_NAME/chapter-N/NUMBER.jpg
+            manga_pics_pattern = r'https://manga\.pics/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
+            matches = re.findall(manga_pics_pattern, html_content)
+
+            if matches:
+                series_path, chapter_path, image_num = matches[0]
+                base_pattern = f"https://manga.pics/{series_path}/{chapter_path}/"
+
+                image_numbers = [int(match[2]) for match in matches]
+                start_number = min(image_numbers)
+
+                logger.info("✅ Found manga.pics pattern: %s", base_pattern)
                 logger.info("📍 Starting number: %d", start_number)
                 logger.info("🔢 Found %d unique image numbers", len(set(image_numbers)))
 
                 return base_pattern, start_number
 
             # If no direct matches, try alternative patterns
-            logger.info("🔍 No direct manga.pics URLs found, trying alternative detection...")
+            logger.info("🔍 No direct image URLs found, trying alternative detection...")
+
+            # Look for any CDN references
+            alt_cdn_pattern = r'cdn2\.ravenscans\.org/([^/\s"\']+)/([^/\s"\']+)'
+            alt_matches = re.findall(alt_cdn_pattern, html_content)
+
+            if alt_matches:
+                series_path, chapter_path = alt_matches[0]
+                base_pattern = f"https://cdn2.ravenscans.org/{series_path}/{chapter_path}/"
+
+                start_number = self._detect_start_number(base_pattern)
+
+                if start_number is not None:
+                    logger.info("✅ Found alternative CDN pattern: %s", base_pattern)
+                    logger.info("📍 Detected starting number: %d", start_number)
+                    return base_pattern, start_number
 
             # Look for any manga.pics references
             alt_pattern = r'manga\.pics/([^/\s"\']+)/([^/\s"\']+)'
@@ -64,15 +94,14 @@ class PatternFinder:
                 series_path, chapter_path = alt_matches[0]
                 base_pattern = f"https://manga.pics/{series_path}/{chapter_path}/"
 
-                # Try to detect start number
                 start_number = self._detect_start_number(base_pattern)
 
                 if start_number is not None:
-                    logger.info("✅ Found alternative pattern: %s", base_pattern)
+                    logger.info("✅ Found alternative manga.pics pattern: %s", base_pattern)
                     logger.info("📍 Detected starting number: %d", start_number)
                     return base_pattern, start_number
 
-            logger.warning("❌ No manga.pics pattern found in the page")
+            logger.warning("❌ No image pattern found in the page")
             return None
 
         except Exception as e:
@@ -163,13 +192,33 @@ class PatternFinder:
 
         return None
 
+    def parse_direct_cdn_url(self, url: str) -> Optional[Tuple[str, int]]:
+        """
+        Parse a direct RavenScans CDN URL to extract the pattern.
+        Example: https://cdn2.ravenscans.org/the-eternal-supreme/chapter-469/5.jpg
+        """
+        pattern = r'https://cdn2\.ravenscans\.org/([^/]+)/([^/]+)/(\d+)\.(?:jpg|png|jpeg|webp)'
+        match = re.match(pattern, url)
+
+        if match:
+            series_path, chapter_path, _ = match.groups()
+            base_pattern = f"https://cdn2.ravenscans.org/{series_path}/{chapter_path}/"
+
+            start_number = self._detect_start_number(base_pattern)
+
+            return base_pattern, start_number
+
+        return None
+
     def find_pattern(self, url: str) -> Optional[dict]:
         """
         Compatibility helper that returns a unified payload containing the base pattern,
-        detected start number, and chapter metadata for a given RavenScans or manga.pics URL.
+        detected start number, and chapter metadata for a given RavenScans, CDN, or manga.pics URL.
         """
-        if 'ravenscans.org' in url:
+        if 'ravenscans.org' in url and 'cdn2.ravenscans.org' not in url:
             result = self.extract_from_ravenscans(url)
+        elif 'cdn2.ravenscans.org' in url:
+            result = self.parse_direct_cdn_url(url)
         elif 'manga.pics' in url:
             result = self.parse_direct_manga_pics_url(url)
         else:
@@ -206,15 +255,18 @@ def main():
     if len(sys.argv) < 2:
         logger.error("Usage: python pattern_finder.py <url>")
         logger.info("Examples:")
-        logger.info("  python pattern_finder.py https://ravenscans.org/call-of-the-spear-chapter-1/")
+        logger.info("  python pattern_finder.py https://ravenscans.org/the-eternal-supreme-chapter-469/")
+        logger.info("  python pattern_finder.py https://cdn2.ravenscans.org/the-eternal-supreme/chapter-469/5.jpg")
         logger.info("  python pattern_finder.py https://manga.pics/call-of-the-spear/chapter-1/5.jpg")
         return
 
     url = sys.argv[1]
     finder = PatternFinder()
 
-    if 'ravenscans.org' in url:
+    if 'ravenscans.org' in url and 'cdn2.ravenscans.org' not in url:
         result = finder.extract_from_ravenscans(url)
+    elif 'cdn2.ravenscans.org' in url:
+        result = finder.parse_direct_cdn_url(url)
     elif 'manga.pics' in url:
         result = finder.parse_direct_manga_pics_url(url)
     else:
