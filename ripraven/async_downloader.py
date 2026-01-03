@@ -250,7 +250,7 @@ class AsyncDownloader:
 
                     # Generate likely RavenScans URL for this series/chapter
                     series_slug = series_name.lower().replace('_', '-').replace(' ', '-')
-                    raven_url = f"https://ravenscans.com/{series_slug}-chapter-{chapter_num}/"
+                    raven_url = f"https://ravenscans.org/{series_slug}-chapter-{chapter_num}/"
 
                     try:
                         # Try to extract pattern

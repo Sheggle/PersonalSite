@@ -168,7 +168,7 @@ class PatternFinder:
         Compatibility helper that returns a unified payload containing the base pattern,
         detected start number, and chapter metadata for a given RavenScans or manga.pics URL.
         """
-        if 'ravenscans.com' in url:
+        if 'ravenscans.org' in url:
             result = self.extract_from_ravenscans(url)
         elif 'manga.pics' in url:
             result = self.parse_direct_manga_pics_url(url)
@@ -206,14 +206,14 @@ def main():
     if len(sys.argv) < 2:
         logger.error("Usage: python pattern_finder.py <url>")
         logger.info("Examples:")
-        logger.info("  python pattern_finder.py https://ravenscans.com/call-of-the-spear-chapter-1/")
+        logger.info("  python pattern_finder.py https://ravenscans.org/call-of-the-spear-chapter-1/")
         logger.info("  python pattern_finder.py https://manga.pics/call-of-the-spear/chapter-1/5.jpg")
         return
 
     url = sys.argv[1]
     finder = PatternFinder()
 
-    if 'ravenscans.com' in url:
+    if 'ravenscans.org' in url:
         result = finder.extract_from_ravenscans(url)
     elif 'manga.pics' in url:
         result = finder.parse_direct_manga_pics_url(url)
