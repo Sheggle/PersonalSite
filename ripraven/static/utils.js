@@ -28,17 +28,25 @@ const UrlUtils = {
 
     /**
      * Parse series and chapter from current URL
+     * Handles fractional chapters like 1.1, 1.2, etc.
      */
     parseSeriesChapterFromURL: function() {
         const url = new URL(window.location.href);
         const parts = url.pathname.split('/').filter(Boolean);
         const seriesSlug = parts.length >= 2 ? decodeURIComponent(parts[1]) : null;
-        const chapterParam = parseInt(url.searchParams.get('chapter'), 10);
+        const chapterParam = url.searchParams.get('chapter');
 
-        if (!seriesSlug || !Number.isFinite(chapterParam) || chapterParam <= 0) {
+        if (!seriesSlug || !chapterParam) {
             return null;
         }
 
+        // Parse as float to handle fractional chapters (1.1, 1.2, etc.)
+        const chapterNum = parseFloat(chapterParam);
+        if (!Number.isFinite(chapterNum) || chapterNum <= 0) {
+            return null;
+        }
+
+        // Return as string to preserve fractional notation
         return { series: seriesSlug, chapter: chapterParam };
     },
 
@@ -92,11 +100,15 @@ function setupKeyboardShortcuts() {
 
 /**
  * Utility to parse chapter number from chapter name
+ * Returns string to support fractional chapters (1.1, 1.2, etc.)
  */
 function parseChapterNumber(chapterName) {
     if (!chapterName) return null;
-    const chapterNum = parseInt(String(chapterName).replace('chapter_', ''), 10);
-    return Number.isFinite(chapterNum) ? chapterNum : null;
+    // Remove 'chapter_' prefix and return as string
+    const chapterNum = String(chapterName).replace('chapter_', '');
+    // Validate it's a valid number (integer or decimal)
+    const parsed = parseFloat(chapterNum);
+    return Number.isFinite(parsed) && parsed > 0 ? chapterNum : null;
 }
 
 // Export utilities for global access

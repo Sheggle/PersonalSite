@@ -235,7 +235,7 @@ const UIController = {
                 const item = document.createElement('div');
                 item.className = 'recent-item';
                 const chapterNum = window.RipRaven.parseChapterNumber(recent.chapter);
-                const safeChapter = chapterNum || 1;
+                const safeChapter = chapterNum || '1';
                 const seriesName = recent.series.length > 30 ? recent.series.slice(0, 30) + '...' : recent.series;
                 item.textContent = `${seriesName} · Chapter ${safeChapter}`;
                 item.addEventListener('click', () => {
@@ -247,7 +247,9 @@ const UIController = {
     },
 
     loadRecentChapter: function(seriesName, chapterNum) {
-        if (Number.isNaN(Number(chapterNum))) {
+        // Validate chapter number (can be integer or fractional like "1.1")
+        const parsed = parseFloat(chapterNum);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
             console.warn('[UIController] Unable to parse chapter number:', chapterNum);
             return;
         }
@@ -255,7 +257,8 @@ const UIController = {
         const normalizedSeries = window.RipRaven.UrlUtils.normalizeSeriesSlug(seriesName);
 
         if (window.RipRaven.StateManager) {
-            window.RipRaven.StateManager.scheduleNavigation(normalizedSeries, Number(chapterNum), {
+            // Keep chapter as string to preserve fractional notation
+            window.RipRaven.StateManager.scheduleNavigation(normalizedSeries, String(chapterNum), {
                 historyMode: 'push',
                 source: 'recent'
             });

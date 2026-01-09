@@ -102,15 +102,23 @@ const StateManager = {
 
     // Navigation Management
     scheduleNavigation: function(seriesName, chapterNum, options = {}) {
-        if (!seriesName || Number.isNaN(Number(chapterNum))) {
+        if (!seriesName || !chapterNum) {
             console.warn('[StateManager] Invalid navigation request:', seriesName, chapterNum);
             return;
         }
 
-        const numericChapter = Number(chapterNum);
+        // Keep chapter as string to support fractional chapters (1.1, 1.2, etc.)
+        const chapterStr = String(chapterNum);
+        // Validate it's a valid number
+        const parsed = parseFloat(chapterStr);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            console.warn('[StateManager] Invalid chapter number:', chapterNum);
+            return;
+        }
+
         this.pendingNavigation = {
             requestedSeries: seriesName,
-            requestedChapter: numericChapter,
+            requestedChapter: chapterStr,
             options: options || {}
         };
 

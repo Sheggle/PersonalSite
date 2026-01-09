@@ -1,5 +1,23 @@
 // ChapterRenderer - Handles DOM manipulation, infinite scroll, and chapter rendering
 
+/**
+ * Compare two chapter numbers (handles fractional chapters like 1.1, 1.2).
+ * Returns: negative if a < b, positive if a > b, 0 if equal.
+ */
+function compareChapterNumbers(a, b) {
+    const partsA = String(a).split('.').map(Number);
+    const partsB = String(b).split('.').map(Number);
+
+    // Compare major version
+    if (partsA[0] !== partsB[0]) {
+        return partsA[0] - partsB[0];
+    }
+    // Compare minor version (default to 0 if not present)
+    const minorA = partsA[1] || 0;
+    const minorB = partsB[1] || 0;
+    return minorA - minorB;
+}
+
 const ChapterRenderer = {
     // Internal state
     comicContainer: null,
@@ -27,7 +45,8 @@ const ChapterRenderer = {
             }
 
             entries.forEach(entry => {
-                const chapterNum = parseInt(entry.target.dataset.chapterNum);
+                // Keep as string to support fractional chapters (1.1, 1.2, etc.)
+                const chapterNum = entry.target.dataset.chapterNum;
 
                 if (entry.isIntersecting && chapterNum) {
                     const chapterName = `chapter_${chapterNum}`;
@@ -72,7 +91,7 @@ const ChapterRenderer = {
         this.comicContainer.innerHTML = '';
         this.chapterBoundaries = []; // Keep for backward compatibility
 
-        let highestChapterInBatch = window.RipRaven.StateManager ? window.RipRaven.StateManager.maxLoadedChapter || 0 : 0;
+        let highestChapterInBatch = window.RipRaven.StateManager ? window.RipRaven.StateManager.maxLoadedChapter || null : null;
 
         chaptersData.forEach((chapter, chapterIndex) => {
             // Add chapter divider (except for first chapter)
@@ -111,7 +130,10 @@ const ChapterRenderer = {
             // Observe this chapter for scroll tracking
             this.chapterObserver.observe(chapterContainer);
 
-            highestChapterInBatch = Math.max(highestChapterInBatch, chapter.chapter_num);
+            // Update highest chapter using comparison function for fractional chapters
+            if (highestChapterInBatch === null || compareChapterNumbers(chapter.chapter_num, highestChapterInBatch) > 0) {
+                highestChapterInBatch = chapter.chapter_num;
+            }
         });
 
         // Update state manager with new data
@@ -187,8 +209,14 @@ const ChapterRenderer = {
         // Update state manager
         if (window.RipRaven.StateManager) {
             window.RipRaven.StateManager.appendChaptersData(newChapters);
-            const newestChapterNumber = newChapters.reduce((max, ch) => Math.max(max, ch.chapter_num), window.RipRaven.StateManager.maxLoadedChapter || 0);
-            window.RipRaven.StateManager.setMaxLoadedChapter(Math.max(window.RipRaven.StateManager.maxLoadedChapter || 0, newestChapterNumber));
+            // Find highest chapter using comparison function for fractional chapters
+            let currentMax = window.RipRaven.StateManager.maxLoadedChapter || null;
+            newChapters.forEach(ch => {
+                if (currentMax === null || compareChapterNumbers(ch.chapter_num, currentMax) > 0) {
+                    currentMax = ch.chapter_num;
+                }
+            });
+            window.RipRaven.StateManager.setMaxLoadedChapter(currentMax);
         }
 
         // Maintain scroll position
@@ -209,7 +237,8 @@ const ChapterRenderer = {
         let chapterStartY = 0;
 
         pages.forEach((page, index) => {
-            const chapterNum = parseInt(page.dataset.chapterNum);
+            // Keep as string for fractional chapter support
+            const chapterNum = page.dataset.chapterNum;
 
             if (currentChapter !== chapterNum) {
                 // Finish previous chapter
@@ -261,8 +290,11 @@ const ChapterRenderer = {
         try {
             const newData = await window.RipRaven.APIClient.loadInfiniteChapters(currentSeries, chapterNum);
 
-            const currentMax = window.RipRaven.StateManager.maxLoadedChapter || 0;
-            const chaptersToAppend = newData.chapters.filter(ch => ch.chapter_num > currentMax);
+            const currentMax = window.RipRaven.StateManager.maxLoadedChapter || null;
+            // Use comparison function for fractional chapters
+            const chaptersToAppend = newData.chapters.filter(ch =>
+                currentMax === null || compareChapterNumbers(ch.chapter_num, currentMax) > 0
+            );
 
             if (chaptersToAppend.length > 0) {
                 this.injectNewChapters(chaptersToAppend);

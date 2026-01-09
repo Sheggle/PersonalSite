@@ -49,7 +49,7 @@ class RecentChapter(BaseModel):
 
 
 class InfiniteChapterData(BaseModel):
-    chapter_num: int
+    chapter_num: str  # String to support fractional chapters (1.1, 1.2, etc.)
     chapter_name: str
     images: List[str]
     page_count: int
@@ -58,22 +58,22 @@ class InfiniteChapterData(BaseModel):
 
 class InfiniteChaptersResponse(BaseModel):
     series: str
-    current_chapter: int
+    current_chapter: str  # String to support fractional chapters
     chapters: List[InfiniteChapterData]
     total_pages: int
-    download_status: Dict[str, str]  # {"chapter_2": "downloading", "chapter_3": "complete", etc.}
+    download_status: Dict[str, str]  # {"chapter_1.1": "downloading", "chapter_2": "complete", etc.}
 
 class ImportMangaRequest(BaseModel):
     url: str
 
 class ImportMangaResponse(BaseModel):
     series: str
-    chapter: int
+    chapter: str  # String to support fractional chapters
     message: str
 
 
 class DownloadStatus(BaseModel):
-    chapter_num: int
+    chapter_num: str  # String to support fractional chapters
     status: str  # "pending", "downloading", "complete", "error", "not_available"
     progress: int = 0  # 0-100
     message: str = ""
@@ -91,6 +91,11 @@ class RipRavenAPI:
         # Initialize downloader
         from .async_downloader import AsyncDownloader
         self.downloader = AsyncDownloader(downloads_dir)
+
+        # Initialize chapter list cache for download lookahead
+        from .pattern_finder import ChapterListCache
+        cache_dir = Path(downloads_dir).parent
+        self.chapter_cache = ChapterListCache(cache_dir)
 
         self.reader_template, self.home_template = self._load_templates()
 
@@ -206,7 +211,7 @@ class RipRavenAPI:
                     raise HTTPException(status_code=400, detail="Could not extract manga information from URL")
 
                 series_name = pattern_result.get('series', 'Unknown_Series')
-                chapter_num = pattern_result.get('chapter', 1)
+                chapter_num = str(pattern_result.get('chapter', '1'))  # Ensure string
                 base_pattern = pattern_result.get('base_pattern')
                 start_number = pattern_result.get('start_number', 0)
 
@@ -223,10 +228,13 @@ class RipRavenAPI:
                 # Clean up series name for folder structure
                 series_clean = series_name.replace(' ', '_').replace('-', '_')
 
+                # Derive series URL for chapter list caching
+                series_url = finder.get_series_url_from_chapter_url(request.url)
+
                 # Create chapter info
                 chapter_info = {
                     'series': series_clean,
-                    'chapter': str(chapter_num)
+                    'chapter': chapter_num
                 }
 
                 # Start download in background on the running event loop
@@ -236,7 +244,8 @@ class RipRavenAPI:
                         chapter_num,
                         base_pattern,
                         start_number,
-                        chapter_info
+                        chapter_info,
+                        series_url
                     )
                 )
 
@@ -253,16 +262,18 @@ class RipRavenAPI:
                 raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
         @self.router.get("/infinite-chapters/{series_name}/{current_chapter}", response_model=InfiniteChaptersResponse)
-        async def get_infinite_chapters(series_name: str, current_chapter: int, background_tasks: BackgroundTasks):
-            """Get multiple chapters for infinite scroll reading with auto-download."""
+        async def get_infinite_chapters(series_name: str, current_chapter: str, background_tasks: BackgroundTasks):
+            """Get multiple chapters for infinite scroll reading with auto-download.
+
+            Uses list-based navigation to handle fractional chapters (1.1, 1.2, etc.).
+            """
             logger.debug(
-                "🔍 Starting infinite chapters request: series=%s, chapter=%d",
+                "🔍 Starting infinite chapters request: series=%s, chapter=%s",
                 series_name,
                 current_chapter,
             )
 
             try:
-                # Get the main chapter and up to 2 additional chapters
                 chapters_data = []
                 total_pages = 0
                 download_status = {}
@@ -272,28 +283,29 @@ class RipRavenAPI:
                     logger.error("❌ Downloader not initialized!")
                     raise HTTPException(status_code=500, detail="Downloader not initialized")
 
-                logger.debug("🔍 Downloader available, checking chapters...")
+                logger.debug("🔍 Downloader available, getting available chapters...")
 
-                # Check which chapters are available (current + next 3)
-                for i in range(2):  # chapters 0, 1 relative to starting
-                    chapter_num = current_chapter + i
-                    logger.debug("🔍 Checking chapter %d...", chapter_num)
+                # Use list-based navigation instead of incrementing
+                chapters_to_load = self.get_next_local_chapters(series_name, current_chapter, count=2)
+                logger.debug("🔍 Chapters to load: %s", chapters_to_load)
+
+                for chapter_name in chapters_to_load:
+                    chapter_num = self.extract_chapter_num_from_name(chapter_name)
+                    logger.debug("🔍 Checking chapter %s...", chapter_num)
 
                     try:
                         chapter_status = self.downloader.get_chapter_status(series_name, chapter_num)
-                        logger.debug("🔍 Chapter %d status: %s", chapter_num, chapter_status)
+                        logger.debug("🔍 Chapter %s status: %s", chapter_num, chapter_status)
                     except Exception as e:
-                        logger.exception("❌ Error getting chapter status for %d", chapter_num)
-                        download_status[f"chapter_{chapter_num}"] = "error"
+                        logger.exception("❌ Error getting chapter status for %s", chapter_num)
+                        download_status[chapter_name] = "error"
                         continue
 
                     if chapter_status["exists"]:
-                        # Get images for this chapter
                         try:
-                            chapter_name = f"chapter_{chapter_num}"
                             logger.debug("🔍 Loading images for %s/%s...", series_name, chapter_name)
                             images = self.get_chapter_images(series_name, chapter_name)
-                            logger.debug("🔍 Found %d images for chapter %d", len(images), chapter_num)
+                            logger.debug("🔍 Found %d images for chapter %s", len(images), chapter_num)
 
                             chapters_data.append(InfiniteChapterData(
                                 chapter_num=chapter_num,
@@ -304,19 +316,18 @@ class RipRavenAPI:
                             ))
 
                             total_pages += len(images)
-                            download_status[f"chapter_{chapter_num}"] = "complete" if chapter_status["complete"] else "incomplete"
+                            download_status[chapter_name] = "complete" if chapter_status["complete"] else "incomplete"
 
                         except Exception as e:
-                            logger.exception("❌ Error loading chapter %d", chapter_num)
-                            download_status[f"chapter_{chapter_num}"] = "error"
+                            logger.exception("❌ Error loading chapter %s", chapter_num)
+                            download_status[chapter_name] = "error"
                     else:
-                        logger.debug("🔍 Chapter %d does not exist", chapter_num)
-                        download_status[f"chapter_{chapter_num}"] = "not_available"
+                        logger.debug("🔍 Chapter %s does not exist", chapter_num)
+                        download_status[chapter_name] = "not_available"
 
                 logger.debug("🔍 Found %d chapters, checking if more downloads needed...", len(chapters_data))
 
                 try:
-                    # Pass the highest available chapter so downloads start from the right point
                     background_tasks.add_task(
                         self.trigger_background_download,
                         series_name,
@@ -383,15 +394,19 @@ class RipRavenAPI:
     async def download_imported_manga(
         self,
         series_name: str,
-        chapter_num: int,
+        chapter_num: str,
         base_pattern: str,
         start_number: int,
-        chapter_info: dict
+        chapter_info: dict,
+        series_url: str = None
     ):
-        """Background task responsible for downloading an imported manga chapter."""
+        """Background task responsible for downloading an imported manga chapter.
+
+        Also scrapes and caches the chapter list from Ravenscans for future lookahead.
+        """
         try:
             logger.debug(
-                "🔄 Starting background download for imported manga: %s Chapter %d",
+                "🔄 Starting background download for imported manga: %s Chapter %s",
                 series_name,
                 chapter_num,
             )
@@ -401,47 +416,76 @@ class RipRavenAPI:
                 from .async_downloader import AsyncDownloader
                 self.downloader = AsyncDownloader(self.downloads_dir)
 
+            # Cache the chapter list for this series if we have the series URL
+            if series_url:
+                logger.info("🔍 Caching chapter list from %s", series_url)
+                self.chapter_cache.refresh_chapters(series_name, series_url)
+
             try:
                 start_num = int(start_number)
             except (TypeError, ValueError):
                 start_num = 0
+
+            # Get next chapter from cache instead of incrementing
+            next_chapters = self.chapter_cache.get_next_chapters(series_name, chapter_num, count=1)
+            chapters_to_download = [chapter_num]
+            if next_chapters:
+                chapters_to_download.append(next_chapters[0])
+
+            logger.debug("📥 Chapters to download: %s", chapters_to_download)
 
             # Build a template that can cover the requested chapter and the following one
             base_template = self._build_chapter_pattern_template(base_pattern, chapter_num)
 
             results = await self.downloader.download_chapters(
                 series_name,
-                [chapter_num, chapter_num + 1],
+                chapters_to_download,
                 base_pattern_template=base_template,
                 series_info=chapter_info,
                 start_number=start_num,
             )
 
-            for num in (chapter_num, chapter_num + 1):
-                files = results.get(num, [])
+            for ch_num in chapters_to_download:
+                files = results.get(ch_num, [])
                 if files:
                     logger.info(
-                        "✅ Successfully imported %s Chapter %d: %d pages",
+                        "✅ Successfully imported %s Chapter %s: %d pages",
                         series_name,
-                        num,
+                        ch_num,
                         len(files),
                     )
                 else:
                     logger.warning(
-                        "❌ No images found for %s Chapter %d",
+                        "❌ No images found for %s Chapter %s",
                         series_name,
-                        num,
+                        ch_num,
                     )
 
         except Exception:
             logger.exception("❌ Background download error for %s", series_name)
 
-    def _build_chapter_pattern_template(self, base_pattern: str, chapter_num: int) -> str:
+    def _build_chapter_pattern_template(self, base_pattern: str, chapter_num: str) -> str:
         """
         Build a reusable chapter pattern template with a {chapter} placeholder.
         Falls back to the original base pattern when no substitution is possible.
+
+        Handles fractional chapters like 1.1 (URL: chapter-1-1).
         """
         stripped = base_pattern.rstrip('/')
+
+        # For fractional chapters (e.g., "1.1"), look for pattern like chapter-1-1
+        if '.' in str(chapter_num):
+            chapter_url_form = str(chapter_num).replace('.', '-')
+            # Look for the chapter pattern in the URL
+            pattern = rf'(chapter-){re.escape(chapter_url_form)}(/?)$'
+            match = re.search(pattern, stripped)
+            if match:
+                suffix = "/" if base_pattern.endswith("/") else ""
+                template = stripped[:match.start()] + "chapter-{chapter}" + suffix
+                logger.debug("🔧 Derived fractional chapter template: %s", template)
+                return template
+
+        # For integer chapters, look for trailing digits
         match = re.search(r'(\d+)$', stripped)
 
         if match:
@@ -449,7 +493,8 @@ class RipRavenAPI:
             digits = stripped[start:end]
 
             try:
-                if int(digits) == int(chapter_num):
+                # Compare as strings to handle both int and fractional
+                if digits == str(chapter_num) or int(digits) == int(float(chapter_num)):
                     if digits.startswith('0') and len(digits) > 1:
                         placeholder = f"{{chapter:0{len(digits)}d}}"
                     else:
@@ -514,6 +559,66 @@ class RipRavenAPI:
         # Sort series by name
         series_list.sort(key=lambda x: x.name)
         return series_list
+
+    def get_available_chapters(self, series_name: str) -> List[str]:
+        """Get sorted list of available chapter names for a series.
+
+        Returns chapter names like ['chapter_1', 'chapter_1.1', 'chapter_2', ...].
+        """
+        series_dir = self.downloads_dir / series_name
+        if not series_dir.exists():
+            return []
+
+        chapters = []
+        for chapter_dir in series_dir.iterdir():
+            if chapter_dir.is_dir() and chapter_dir.name.startswith('chapter_'):
+                chapters.append(chapter_dir.name)
+
+        # Sort naturally to handle 1, 1.1, 1.2, 2, 10, etc.
+        chapters.sort(key=natural_sort_key)
+        return chapters
+
+    def get_next_local_chapters(self, series_name: str, current_chapter: str, count: int = 2) -> List[str]:
+        """Get the next N chapter names after the current chapter from local filesystem.
+
+        Args:
+            series_name: The series name
+            current_chapter: Current chapter number (e.g., '1', '1.1', '2')
+            count: Number of chapters to return (including current)
+
+        Returns:
+            List of chapter names starting from current chapter
+        """
+        chapters = self.get_available_chapters(series_name)
+        if not chapters:
+            return []
+
+        # Convert chapter number to chapter name format
+        chapter_name = f"chapter_{current_chapter}"
+
+        try:
+            current_idx = chapters.index(chapter_name)
+        except ValueError:
+            # Current chapter not found, try to find the first chapter >= current
+            logger.warning("⚠️ Chapter %s not found locally, looking for closest match", chapter_name)
+            for idx, ch in enumerate(chapters):
+                if natural_sort_key(ch) >= natural_sort_key(chapter_name):
+                    current_idx = idx
+                    break
+            else:
+                return []
+
+        # Return current chapter plus next chapters
+        return chapters[current_idx:current_idx + count]
+
+    def extract_chapter_num_from_name(self, chapter_name: str) -> str:
+        """Extract chapter number from chapter name.
+
+        E.g., 'chapter_1.1' -> '1.1', 'chapter_10' -> '10'
+        """
+        if chapter_name.startswith('chapter_'):
+            return chapter_name[8:]  # len('chapter_') == 8
+        return chapter_name
 
     def get_image_files(self, chapter_dir: Path) -> List[str]:
         """Get sorted list of image files in a chapter directory."""
@@ -597,28 +702,56 @@ class RipRavenAPI:
         except Exception as e:
             logger.error("Error saving recent chapters: %s", e)
 
-    async def trigger_background_download(self, series_name: str, current_chapter: int):
-        """Trigger background download of next chapters."""
+    async def trigger_background_download(self, series_name: str, current_chapter: str):
+        """Trigger background download of next chapters using chapter cache.
+
+        Uses the cached chapter list from Ravenscans to determine which chapters
+        to download next, handling fractional chapters (1.1, 1.2, etc.) correctly.
+        """
         try:
+            # Check if we need to refresh the chapter cache
+            if self.chapter_cache.needs_refresh(series_name, current_chapter, lookahead=3):
+                logger.info("🔄 Chapter cache needs refresh for %s", series_name)
+                series_url = self.chapter_cache.get_series_url(series_name)
+                if series_url:
+                    self.chapter_cache.refresh_chapters(series_name, series_url)
+
+            # Get next chapters from cache
+            next_chapters = self.chapter_cache.get_next_chapters(series_name, current_chapter, count=3)
+
+            if not next_chapters:
+                # Fallback: try to find next chapters locally (already downloaded)
+                local_chapters = self.get_next_local_chapters(series_name, current_chapter, count=4)
+                # Skip the first one (current chapter) and take the next 3
+                next_chapters = [self.extract_chapter_num_from_name(ch) for ch in local_chapters[1:4]]
+
+            if not next_chapters:
+                logger.info("ℹ️ No next chapters found for %s after chapter %s", series_name, current_chapter)
+                return
+
             logger.info(
-                "🔄 Starting background download for %s chapters %d-%d",
+                "🔄 Starting background download for %s chapters: %s",
                 series_name,
-                current_chapter + 1,
-                current_chapter + 3,
+                ", ".join(next_chapters),
             )
 
-            chapters: list[int] = []
+            chapters_to_download: list[str] = []
 
             # Update download status
-            for i in range(1, 4):  # chapters +1, +2, +3
-                chapter_num = current_chapter + i
+            for chapter_num in next_chapters:
                 key = f"{series_name}_{chapter_num}"
 
-                # Check if already downloading or complete
-                if key in self.download_status:
+                # Check if already downloading or complete (allow retry for "not_available" or "error")
+                existing_status = self.download_status.get(key)
+                if existing_status and existing_status.status in ("downloading", "complete"):
                     continue
 
-                chapters.append(chapter_num)
+                # Check if already downloaded locally
+                chapter_status = self.downloader.get_chapter_status(series_name, chapter_num)
+                if chapter_status["exists"] and chapter_status["complete"]:
+                    continue
+
+                chapters_to_download.append(chapter_num)
 
                 # Mark as downloading
                 self.download_status[key] = DownloadStatus(
@@ -628,12 +761,12 @@ class RipRavenAPI:
                     message="Starting download..."
                 )
 
-            if not chapters:
+            if not chapters_to_download:
                 logger.info("ℹ️ No new chapters to queue for %s", series_name)
                 return
 
-            # Download the chapters - pass max_available_chapter instead of current_chapter
-            results = await self.downloader.download_chapters(series_name, chapters)
+            # Download the chapters
+            results = await self.downloader.download_chapters(series_name, chapters_to_download)
 
             # Update status based on results
             for chapter_num, files in results.items():
@@ -658,8 +791,7 @@ class RipRavenAPI:
         except Exception as e:
             logger.exception("❌ Background download error for %s", series_name)
             # Mark failed chapters
-            for i in range(1, 4):
-                chapter_num = current_chapter + i
+            for chapter_num in next_chapters if 'next_chapters' in dir() else []:
                 key = f"{series_name}_{chapter_num}"
                 self.download_status[key] = DownloadStatus(
                     chapter_num=chapter_num,

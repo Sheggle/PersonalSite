@@ -159,12 +159,12 @@ class AsyncDownloader:
     async def download_chapters(
         self,
         series_name: str,
-        chapters: List[int],
+        chapters: List[str],
         *,
         base_pattern_template: str | None = None,
         series_info: dict | None = None,
         start_number: int = 0,
-    ) -> Dict[int, List[str]]:
+    ) -> Dict[str, List[str]]:
         """
         Download one or more chapters and return downloaded file paths per chapter.
 
@@ -177,26 +177,26 @@ class AsyncDownloader:
         if not chapters:
             return {}
 
-        logger.info("🔄 Downloading chapters: %s", ", ".join(map(str, chapters)))
+        logger.info("🔄 Downloading chapters: %s", ", ".join(chapters))
 
         # Ensure series info always has a sensible default
         base_series_info = (series_info or {}).copy()
         if "series" not in base_series_info:
             base_series_info["series"] = series_name or "Unknown"
 
-        results: Dict[int, List[str]] = {}
+        results: Dict[str, List[str]] = {}
 
         for chapter_num in chapters:
-            logger.info("📥 Downloading Chapter %d...", chapter_num)
+            logger.info("📥 Downloading Chapter %s...", chapter_num)
 
             chapter_info = base_series_info.copy()
-            chapter_info["chapter"] = str(chapter_num)
+            chapter_info["chapter"] = chapter_num
 
             chapter_dir = self.output_dir / chapter_info["series"] / f"chapter_{chapter_num}"
             completion_marker = chapter_dir / "completed"
 
             if completion_marker.exists():
-                logger.info("✅ Chapter %d already downloaded", chapter_num)
+                logger.info("✅ Chapter %s already downloaded", chapter_num)
                 # Collect existing files to surface consistent return data
                 image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
                 existing_files = [
@@ -208,40 +208,48 @@ class AsyncDownloader:
                 continue
 
             # Resolve the base pattern for this chapter
+            # For fractional chapters (1.1), convert to URL format (1-1)
+            chapter_url_format = chapter_num.replace('.', '-') if '.' in chapter_num else chapter_num
             if base_pattern_template:
-                base_pattern = base_pattern_template.format(chapter=chapter_num)
+                base_pattern = base_pattern_template.format(chapter=chapter_url_format)
             else:
                 base_pattern = await self.detect_series_pattern(series_name, chapter_num)
                 if not base_pattern:
                     series_slug = (series_name or "").lower().replace("_", "-").replace(" ", "-")
-                    base_pattern = f"https://manga.pics/{series_slug}/chapter-{chapter_num}/"
+                    base_pattern = f"https://manga.pics/{series_slug}/chapter-{chapter_url_format}/"
                     logger.info("🔍 Using fallback pattern: %s", base_pattern)
 
             try:
                 downloaded_files = await self.find_all_images(base_pattern, start_number, chapter_info)
                 if downloaded_files:
                     logger.info(
-                        "✅ Chapter %d: %d pages downloaded",
+                        "✅ Chapter %s: %d pages downloaded",
                         chapter_num,
                         len(downloaded_files),
                     )
                 else:
-                    logger.warning("❌ Chapter %d: No images found", chapter_num)
+                    logger.warning("❌ Chapter %s: No images found", chapter_num)
                 results[chapter_num] = downloaded_files
             except Exception as e:
-                logger.error("❌ Chapter %d: Error - %s", chapter_num, e)
+                logger.error("❌ Chapter %s: Error - %s", chapter_num, e)
                 results[chapter_num] = []
 
         return results
 
-    async def detect_series_pattern(self, series_name: str, chapter_num: int) -> str:
+    async def detect_series_pattern(self, series_name: str, chapter_num: str) -> str:
         """
         Try to detect the correct URL pattern for a series by examining existing chapters.
         Returns the base pattern URL or None if detection fails.
         """
         try:
+            # Convert to int for iteration if possible, otherwise just check chapter 1
+            try:
+                max_chapter = int(float(chapter_num))
+            except ValueError:
+                max_chapter = 2
+
             # Look for an existing chapter to extract the pattern
-            for existing_chapter in range(1, chapter_num):
+            for existing_chapter in range(1, max_chapter):
                 chapter_dir = self.output_dir / series_name / f"chapter_{existing_chapter}"
                 if chapter_dir.exists():
                     # Try to find pattern from existing downloads or use PatternFinder
@@ -249,8 +257,10 @@ class AsyncDownloader:
                     finder = PatternFinder()
 
                     # Generate likely RavenScans URL for this series/chapter
+                    # Convert fractional chapters to URL format (1.1 -> 1-1)
                     series_slug = series_name.lower().replace('_', '-').replace(' ', '-')
-                    raven_url = f"https://cdn2.ravenscans.org/{series_slug}/chapter-{chapter_num}/"
+                    chapter_url_format = chapter_num.replace('.', '-') if '.' in chapter_num else chapter_num
+                    raven_url = f"https://cdn2.ravenscans.org/{series_slug}/chapter-{chapter_url_format}/"
 
                     try:
                         # Try to extract pattern
@@ -269,8 +279,13 @@ class AsyncDownloader:
 
         return None
 
-    def get_chapter_status(self, series_name: str, chapter_num: int) -> Dict[str, any]:
-        """Check if a chapter exists and is complete."""
+    def get_chapter_status(self, series_name: str, chapter_num: str) -> Dict[str, any]:
+        """Check if a chapter exists and is complete.
+
+        Args:
+            series_name: The series name
+            chapter_num: Chapter number as string (e.g., '1', '1.1', '10')
+        """
         chapter_dir = self.output_dir / series_name / f"chapter_{chapter_num}"
         completion_marker = chapter_dir / "completed"
 
