@@ -74,14 +74,14 @@ def ripraven_static(file_path: str):
 
 
 @app.get("/ripraven/{series_name}")
-def ripraven_series(series_name: str, chapter: int | None = None):
+def ripraven_series(series_name: str, chapter: str | None = None):
     if chapter is not None:
         return _ripraven_reader_response()
     return _ripraven_home_response()
 
 
 @app.get("/ripraven/{series_name}/{chapter_num}")
-def ripraven_series_chapter(series_name: str, chapter_num: int):
+def ripraven_series_chapter(series_name: str, chapter_num: str):
     encoded = quote(series_name, safe="")
     return RedirectResponse(url=f"/ripraven/{encoded}?chapter={chapter_num}", status_code=307)
 
@@ -91,12 +91,21 @@ def ripraven_root_with_slash():
     return _ripraven_home_response()
 
 
+def _is_chapter_number(s: str) -> bool:
+    """Check if string is a valid chapter number (int or float like 1.1)."""
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
 @app.get("/ripraven/{remaining_path:path}", include_in_schema=False)
-def ripraven_catch_all(remaining_path: str, request: Request, chapter: int | None = None):
+def ripraven_catch_all(remaining_path: str, request: Request, chapter: str | None = None):
     if chapter is not None:
         return _ripraven_reader_response()
     parts = [p for p in remaining_path.split("/") if p]
-    if len(parts) >= 2 and parts[-1].isdigit():
+    if len(parts) >= 2 and _is_chapter_number(parts[-1]):
         encoded = quote(parts[-2], safe="")
         return RedirectResponse(url=f"/ripraven/{encoded}?chapter={parts[-1]}", status_code=307)
     return _ripraven_home_response()
