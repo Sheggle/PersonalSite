@@ -266,11 +266,13 @@
 
           const resumeMap = new Map();
           recent.forEach((entry) => {
-            const chapterNum = parseInt(String(entry.chapter).replace('chapter_', ''), 10);
-            if (!Number.isFinite(chapterNum)) {
+            const chapterStr = String(entry.chapter).replace('chapter_', '');
+            const chapterNum = parseFloat(chapterStr);
+            if (!Number.isFinite(chapterNum) || chapterNum <= 0) {
               return;
             }
-            resumeMap.set(entry.series, { chapter: chapterNum });
+            // Keep as string to preserve fractional notation (1.1, 1.2, etc.)
+            resumeMap.set(entry.series, { chapter: chapterStr });
           });
 
           if (!series.length) {
@@ -314,21 +316,25 @@
             const selector = document.createElement('select');
             selector.innerHTML = '<option value="">Jump to chapter…</option>';
             item.chapters.forEach((chapter) => {
-              const chapterNum = parseInt(String(chapter.name).replace('chapter_', ''), 10);
-              if (!Number.isFinite(chapterNum)) {
+              const chapterStr = String(chapter.name).replace('chapter_', '');
+              const chapterNum = parseFloat(chapterStr);
+              if (!Number.isFinite(chapterNum) || chapterNum <= 0) {
                 return;
               }
               const option = document.createElement('option');
-              option.value = chapterNum;
-              option.textContent = `Chapter ${chapterNum}`;
+              // Use string value to preserve fractional chapters (1.1, 1.2, etc.)
+              option.value = chapterStr;
+              option.textContent = `Chapter ${chapterStr}`;
               selector.appendChild(option);
             });
             selector.addEventListener('change', (event) => {
-              const chapterValue = parseInt(event.target.value, 10);
-              if (!Number.isFinite(chapterValue)) {
+              const chapterStr = event.target.value;
+              const chapterNum = parseFloat(chapterStr);
+              if (!chapterStr || !Number.isFinite(chapterNum)) {
                 return;
               }
-              window.location.href = `/ripraven/${encodedSeries}?chapter=${chapterValue}`;
+              // Use string value to preserve fractional chapters in URL
+              window.location.href = `/ripraven/${encodedSeries}?chapter=${chapterStr}`;
             });
             selectWrap.appendChild(selector);
             actions.appendChild(selectWrap);
