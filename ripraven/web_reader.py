@@ -770,12 +770,15 @@ class RipRavenAPI:
 
             # Get the chapter URL from cache and extract the download pattern
             base_pattern_template = None
+            logger.info("🔍 Looking for pattern template, chapters_to_download=%s", chapters_to_download)
             for chapter_num in chapters_to_download:
                 chapter_url = self.chapter_cache.get_chapter_url(series_name, chapter_num)
+                logger.info("🔍 get_chapter_url(%s, %s) = %s", series_name, chapter_num, chapter_url)
                 if chapter_url:
                     from .pattern_finder import PatternFinder
                     finder = PatternFinder()
                     pattern_result = finder.find_pattern(chapter_url)
+                    logger.info("🔍 find_pattern result: %s", pattern_result)
                     if pattern_result and pattern_result.get('base_pattern'):
                         # Build template from the pattern
                         base_pattern = pattern_result['base_pattern']
@@ -784,6 +787,10 @@ class RipRavenAPI:
                         )
                         logger.info("🔗 Using pattern template: %s", base_pattern_template)
                         break
+                    else:
+                        logger.warning("⚠️ No base_pattern in result for %s", chapter_url)
+                else:
+                    logger.warning("⚠️ No cached URL for chapter %s", chapter_num)
 
             # Download the chapters
             results = await self.downloader.download_chapters(
