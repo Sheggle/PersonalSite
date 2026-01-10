@@ -150,7 +150,10 @@ class RipRavenAPI:
             elif file_path.endswith('.js'):
                 content_type = "application/javascript"
 
-            return FileResponse(file_full_path, media_type=content_type)
+            response = FileResponse(file_full_path, media_type=content_type)
+            # Prevent aggressive browser caching of static files
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return response
 
         @self.router.get("/series", response_model=List[SeriesInfo])
         async def get_series():
