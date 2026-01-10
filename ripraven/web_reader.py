@@ -768,8 +768,29 @@ class RipRavenAPI:
                 logger.info("ℹ️ No new chapters to queue for %s", series_name)
                 return
 
+            # Get the chapter URL from cache and extract the download pattern
+            base_pattern_template = None
+            for chapter_num in chapters_to_download:
+                chapter_url = self.chapter_cache.get_chapter_url(series_name, chapter_num)
+                if chapter_url:
+                    from .pattern_finder import PatternFinder
+                    finder = PatternFinder()
+                    pattern_result = finder.find_pattern(chapter_url)
+                    if pattern_result and pattern_result.get('base_pattern'):
+                        # Build template from the pattern
+                        base_pattern = pattern_result['base_pattern']
+                        base_pattern_template = self._build_chapter_pattern_template(
+                            base_pattern, chapter_num
+                        )
+                        logger.info("🔗 Using pattern template: %s", base_pattern_template)
+                        break
+
             # Download the chapters
-            results = await self.downloader.download_chapters(series_name, chapters_to_download)
+            results = await self.downloader.download_chapters(
+                series_name,
+                chapters_to_download,
+                base_pattern_template=base_pattern_template
+            )
 
             # Update status based on results
             for chapter_num, files in results.items():
