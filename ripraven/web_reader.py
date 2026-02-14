@@ -567,15 +567,23 @@ class RipRavenAPI:
         """Get sorted list of available chapter names for a series.
 
         Returns chapter names like ['chapter_1', 'chapter_1.1', 'chapter_2', ...].
+        Only includes chapters that have at least one image file.
         """
         series_dir = self.downloads_dir / series_name
         if not series_dir.exists():
             return []
 
+        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
         chapters = []
         for chapter_dir in series_dir.iterdir():
             if chapter_dir.is_dir() and chapter_dir.name.startswith('chapter_'):
-                chapters.append(chapter_dir.name)
+                # Skip empty directories (from failed downloads)
+                has_images = any(
+                    f.is_file() and f.suffix.lower() in image_extensions
+                    for f in chapter_dir.iterdir()
+                )
+                if has_images:
+                    chapters.append(chapter_dir.name)
 
         # Sort naturally to handle 1, 1.1, 1.2, 2, 10, etc.
         chapters.sort(key=natural_sort_key)
@@ -705,6 +713,14 @@ class RipRavenAPI:
         except Exception as e:
             logger.error("Error saving recent chapters: %s", e)
 
+    def _derive_series_url(self, series_name: str) -> str:
+        """Derive a RavenScans series URL from a series folder name.
+
+        E.g. 'The_Eternal_Supreme' -> 'https://ravenscans.org/manga/the-eternal-supreme/'
+        """
+        slug = series_name.lower().replace('_', '-').replace(' ', '-')
+        return f"https://ravenscans.org/manga/{slug}/"
+
     async def trigger_background_download(self, series_name: str, current_chapter: str):
         """Trigger background download of next chapters using chapter cache.
 
@@ -716,6 +732,10 @@ class RipRavenAPI:
             if self.chapter_cache.needs_refresh(series_name, current_chapter, lookahead=3):
                 logger.info("🔄 Chapter cache needs refresh for %s", series_name)
                 series_url = self.chapter_cache.get_series_url(series_name)
+                if not series_url:
+                    # Derive series URL from folder name as fallback
+                    series_url = self._derive_series_url(series_name)
+                    logger.info("🔗 Derived series URL: %s", series_url)
                 if series_url:
                     self.chapter_cache.refresh_chapters(series_name, series_url)
 

@@ -25,6 +25,8 @@ const ChapterRenderer = {
     isInitialSetup: false,
     chapterBoundaries: [],
     isLoadingNextChapters: false,
+    lastFrontierCheck: 0,           // Timestamp of last frontier API call
+    frontierCooldownMs: 60000,      // 60s cooldown between frontier checks
 
     /**
      * Initialize the chapter renderer
@@ -285,12 +287,22 @@ const ChapterRenderer = {
             return;
         }
 
+        // At the frontier (viewing last loaded chapter), apply a cooldown
+        // to prevent excessive API calls and background download attempts
+        const currentMax = window.RipRaven.StateManager.maxLoadedChapter || null;
+        if (currentMax !== null && compareChapterNumbers(chapterNum, currentMax) >= 0) {
+            const now = Date.now();
+            if (now - this.lastFrontierCheck < this.frontierCooldownMs) {
+                return;
+            }
+            this.lastFrontierCheck = now;
+        }
+
         this.isLoadingNextChapters = true;
 
         try {
             const newData = await window.RipRaven.APIClient.loadInfiniteChapters(currentSeries, chapterNum);
 
-            const currentMax = window.RipRaven.StateManager.maxLoadedChapter || null;
             // Use comparison function for fractional chapters
             const chaptersToAppend = newData.chapters.filter(ch =>
                 currentMax === null || compareChapterNumbers(ch.chapter_num, currentMax) > 0
@@ -298,6 +310,8 @@ const ChapterRenderer = {
 
             if (chaptersToAppend.length > 0) {
                 this.injectNewChapters(chaptersToAppend);
+                // Reset cooldown so next frontier check happens quickly
+                this.lastFrontierCheck = 0;
             }
         } catch (error) {
             console.error('Error checking for new content:', error);

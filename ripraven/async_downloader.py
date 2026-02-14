@@ -145,14 +145,26 @@ class AsyncDownloader:
         )
         logger.info("📁 Saved to: %s", chapter_dir)
 
-        # Create completion marker file
-        if downloaded_files:  # Only if we actually downloaded something
+        if downloaded_files:
+            # Create completion marker file
             completion_file = chapter_dir / "completed"
             try:
                 completion_file.touch()
                 logger.info("✅ Completion marker created: %s", completion_file)
             except Exception as e:
                 logger.warning("⚠️ Could not create completion marker: %s", e)
+        else:
+            # Clean up empty chapter directory from failed download
+            try:
+                if chapter_dir.exists() and not any(
+                    f for f in chapter_dir.iterdir()
+                    if f.is_file() and f.suffix.lower() in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+                ):
+                    import shutil
+                    shutil.rmtree(chapter_dir)
+                    logger.info("🧹 Cleaned up empty chapter directory: %s", chapter_dir)
+            except Exception as e:
+                logger.warning("⚠️ Could not clean up empty directory: %s", e)
 
         return downloaded_files
 
