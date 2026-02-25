@@ -252,6 +252,15 @@ class RipRavenAPI:
                     )
                 )
 
+                # Save as recently read at chapter 1 so it shows up in recents
+                first_chapter = "1"
+                self.save_recent_chapter(RecentChapter(
+                    series=series_clean,
+                    chapter=first_chapter,
+                    last_read=datetime.now().isoformat(),
+                    page_position=0,
+                ))
+
                 return ImportMangaResponse(
                     series=series_clean,
                     chapter=chapter_num,

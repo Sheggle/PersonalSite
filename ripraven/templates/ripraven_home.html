@@ -138,6 +138,50 @@
         color: #7d8590;
         font-size: 0.9rem;
       }
+      /* Recents section styles */
+      .recents-section {
+        margin-bottom: 2rem;
+      }
+      .recents-section h2 {
+        color: #ff6b35;
+        margin: 0 0 1rem;
+        font-size: 1.3rem;
+      }
+      .recents-row {
+        display: flex;
+        gap: 1rem;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+      }
+      .recent-card {
+        flex: 0 0 auto;
+        width: 170px;
+        padding: 1rem;
+        background: #2d2d2d;
+        border: 1px solid #555;
+        border-radius: 12px;
+        text-decoration: none;
+        color: #fff;
+        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .recent-card:hover {
+        transform: translateY(-2px);
+        border-color: #ff6b35;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+      }
+      .recent-card .rc-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #ff6b35;
+        margin-bottom: 0.4rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .recent-card .rc-chapter {
+        font-size: 0.85rem;
+        color: #ccc;
+      }
       /* Import section styles */
       .import-section {
         background: #333333;
@@ -238,6 +282,11 @@
         <div class="import-status" id="importStatus"></div>
       </div>
 
+      <section id="recentsSection" class="recents-section" style="display: none;">
+        <h2>📖 Recently Read</h2>
+        <div id="recentsRow" class="recents-row"></div>
+      </section>
+
       <section id="seriesSection">
         <div id="seriesGrid" class="series-grid"></div>
         <div id="emptyState" class="empty" style="display: none;">
@@ -274,6 +323,32 @@
             // Keep as string to preserve fractional notation (1.1, 1.2, etc.)
             resumeMap.set(entry.series, { chapter: chapterStr });
           });
+
+          // Render recents row (top 5)
+          const recentsSection = document.getElementById('recentsSection');
+          const recentsRow = document.getElementById('recentsRow');
+          recentsRow.innerHTML = '';
+          const topRecent = recent.slice(0, 5).filter(entry => {
+            const ch = parseFloat(String(entry.chapter).replace('chapter_', ''));
+            return Number.isFinite(ch) && ch > 0;
+          });
+          if (topRecent.length > 0) {
+            recentsSection.style.display = '';
+            topRecent.forEach((entry) => {
+              const chapterStr = String(entry.chapter).replace('chapter_', '');
+              const encoded = encodeURIComponent(entry.series);
+              const a = document.createElement('a');
+              a.className = 'recent-card';
+              a.href = `/ripraven/${encoded}?chapter=${chapterStr}`;
+              a.innerHTML = `
+                <div class="rc-title">${entry.series.replace(/_/g, ' ')}</div>
+                <div class="rc-chapter">Chapter ${chapterStr}</div>
+              `;
+              recentsRow.appendChild(a);
+            });
+          } else {
+            recentsSection.style.display = 'none';
+          }
 
           if (!series.length) {
             emptyState.style.display = '';
