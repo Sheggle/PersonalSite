@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from ripraven import create_ripraven_router
+from backend.pp import router as pp_router
 
 app = FastAPI(title="Sheggle Backend", version="0.1.0")
 
@@ -31,6 +32,9 @@ ripraven_page = frontend_dir / "rip_raven.html"
 
 # Include RipRaven routes under /api/ripraven
 app.include_router(ripraven_router, prefix="/api/ripraven")
+
+# Include PP (Peronsal Persistent) todo routes
+app.include_router(pp_router, prefix="/api/pp")
 
 
 def _ripraven_home_response() -> HTMLResponse:
