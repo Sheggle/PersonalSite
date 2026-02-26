@@ -419,7 +419,7 @@ async def check_email(_key: str = Depends(verify_api_key)):
 
         parsed = _parse_overduyn_email(body.get("text", ""), body.get("links", []))
         houses = _read_houses()
-        existing_urls = {h.get("listing_url") for h in houses if h.get("state") != "rejected"}
+        existing_urls = {h.get("listing_url") for h in houses}
 
         for p in parsed:
             if p["listing_url"] in existing_urls:
