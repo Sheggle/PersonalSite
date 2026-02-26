@@ -24,7 +24,7 @@ WHATSAPP_GROUP_NAME = os.environ.get("WHATSAPP_GROUP_NAME", "")
 
 VALID_STATES = {"new", "sent_to_gf", "approved", "booked", "rejected"}
 STATE_TRANSITIONS = {
-    "new": {"sent_to_gf", "rejected"},
+    "new": {"sent_to_gf", "booked", "rejected"},
     "sent_to_gf": {"approved", "rejected"},
     "approved": {"booked", "rejected"},
     "booked": {"rejected"},
