@@ -8,6 +8,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from ripraven import create_ripraven_router
 from backend.pp import router as pp_router
+from backend.tools.gmail import router as gmail_router
+from backend.tools.whatsapp import router as whatsapp_router
+from backend.houses import router as houses_router
 
 app = FastAPI(title="Sheggle Backend", version="0.1.0")
 
@@ -35,6 +38,13 @@ app.include_router(ripraven_router, prefix="/api/ripraven")
 
 # Include PP (Peronsal Persistent) todo routes
 app.include_router(pp_router, prefix="/api/pp")
+
+# Include house decision routes (under PP)
+app.include_router(houses_router, prefix="/api/pp/houses")
+
+# Include general-purpose tool routes
+app.include_router(gmail_router, prefix="/api/tools/gmail")
+app.include_router(whatsapp_router, prefix="/api/tools/whatsapp")
 
 
 def _ripraven_home_response() -> HTMLResponse:

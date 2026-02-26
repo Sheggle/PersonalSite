@@ -11,6 +11,9 @@ dependencies = [
     "aiofiles",
     "pillow",
     "httpx>=0.28.1",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "beautifulsoup4",
 ]
 
 [tool.uv]
