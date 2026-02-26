@@ -17,6 +17,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 HOUSES_FILE = DATA_DIR / "pp_houses.json"
 
 PP_API_KEY = os.environ.get("PP_API_KEY", "pp-dev-key-change-me")
+GMAPS_KEY = os.environ.get("GMAPS_API_KEY", "")
 
 TOOLS_BASE = "http://127.0.0.1:8000/api/tools"
 WHATSAPP_GROUP_NAME = os.environ.get("WHATSAPP_GROUP_NAME", "")
@@ -44,6 +45,7 @@ class HouseListing(BaseModel):
     price: int | None = None
     sqm: int | None = None
     rooms: int | None = None
+    travel_min: int | None = None
     listing_url: str
     state: str = "new"
     gf_sent: bool = False
@@ -141,6 +143,63 @@ def _parse_overduyn_email(text: str, links: list[str]) -> list[dict]:
     return houses
 
 
+# --- Travel time ---
+
+
+async def _get_travel_time(address: str) -> int | None:
+    """Get transit travel time in minutes from address to Utrecht Centraal.
+
+    Uses Google Maps Directions API, departing Monday 8:00 CET.
+    Returns actual moving time (excludes initial wait).
+    """
+    if not GMAPS_KEY:
+        return None
+
+    # Next Monday at 8:00 CET
+    from datetime import timedelta
+    import calendar
+
+    now = datetime.now(timezone.utc)
+    cet = timezone(timedelta(hours=1))
+    today_cet = now.astimezone(cet).date()
+    days_until_monday = (7 - today_cet.weekday()) % 7
+    if days_until_monday == 0:
+        days_until_monday = 7
+    next_monday = today_cet + timedelta(days=days_until_monday)
+    departure = datetime(next_monday.year, next_monday.month, next_monday.day, 8, 0, tzinfo=cet)
+    dep_ts = int(departure.timestamp())
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                "https://maps.googleapis.com/maps/api/directions/json",
+                params={
+                    "origin": address,
+                    "destination": "Utrecht Centraal",
+                    "mode": "transit",
+                    "departure_time": dep_ts,
+                    "key": GMAPS_KEY,
+                },
+            )
+            data = resp.json()
+
+        if data.get("status") != "OK" or not data.get("routes"):
+            return None
+
+        leg = data["routes"][0]["legs"][0]
+        # departure_time and arrival_time give us actual moving time
+        # (excludes the "wait until 8:10 to leave" part)
+        dep = leg.get("departure_time", {}).get("value")
+        arr = leg.get("arrival_time", {}).get("value")
+        if dep and arr:
+            return (arr - dep) // 60
+
+        # Fallback to duration field
+        return leg.get("duration", {}).get("value", 0) // 60
+    except Exception:
+        return None
+
+
 # --- Side effects ---
 
 
@@ -215,6 +274,25 @@ def create_house(body: HouseCreate, _key: str = Depends(verify_api_key)):
     return house
 
 
+async def _make_house(p: dict, gf_sent: bool = False) -> dict:
+    """Build a house dict from parsed data, enriching with travel time."""
+    now = datetime.now(timezone.utc).isoformat()
+    travel = await _get_travel_time(p["address"])
+    return {
+        "id": uuid.uuid4().hex[:12],
+        "address": p["address"],
+        "price": p.get("price"),
+        "sqm": p.get("sqm"),
+        "rooms": p.get("rooms"),
+        "travel_min": travel,
+        "listing_url": p["listing_url"],
+        "state": "new",
+        "gf_sent": gf_sent,
+        "created_at": now,
+        "decided_at": None,
+    }
+
+
 @router.post("/ingest-email", status_code=201)
 async def ingest_email(
     email_id: str = Query(...),
@@ -238,24 +316,12 @@ async def ingest_email(
 
     houses = _read_houses()
     existing_urls = {h.get("listing_url") for h in houses if h.get("state") != "rejected"}
-    now = datetime.now(timezone.utc).isoformat()
 
     created = []
     for p in parsed:
         if p["listing_url"] in existing_urls:
             continue
-        house = {
-            "id": uuid.uuid4().hex[:12],
-            "address": p["address"],
-            "price": p.get("price"),
-            "sqm": p.get("sqm"),
-            "rooms": p.get("rooms"),
-            "listing_url": p["listing_url"],
-            "state": "new",
-            "gf_sent": False,
-            "created_at": now,
-            "decided_at": None,
-        }
+        house = await _make_house(p)
         houses.append(house)
         existing_urls.add(p["listing_url"])
         created.append(house)
@@ -300,6 +366,25 @@ def delete_house(house_id: str, _key: str = Depends(verify_api_key)):
     _write_houses(new)
 
 
+@router.post("/enrich-travel")
+async def enrich_travel(_key: str = Depends(verify_api_key)):
+    """Backfill travel_min for houses that don't have it yet."""
+    houses = _read_houses()
+    updated = 0
+    for house in houses:
+        if house.get("travel_min") is not None:
+            continue
+        if house.get("state") == "rejected":
+            continue
+        travel = await _get_travel_time(house["address"])
+        if travel is not None:
+            house["travel_min"] = travel
+            updated += 1
+    if updated:
+        _write_houses(houses)
+    return {"updated": updated}
+
+
 # --- Email check ---
 
 
@@ -335,23 +420,11 @@ async def check_email(_key: str = Depends(verify_api_key)):
         parsed = _parse_overduyn_email(body.get("text", ""), body.get("links", []))
         houses = _read_houses()
         existing_urls = {h.get("listing_url") for h in houses if h.get("state") != "rejected"}
-        now = datetime.now(timezone.utc).isoformat()
 
         for p in parsed:
             if p["listing_url"] in existing_urls:
                 continue
-            house = {
-                "id": uuid.uuid4().hex[:12],
-                "address": p["address"],
-                "price": p.get("price"),
-                "sqm": p.get("sqm"),
-                "rooms": p.get("rooms"),
-                "listing_url": p["listing_url"],
-                "state": "new",
-                "gf_sent": False,
-                "created_at": now,
-                "decided_at": None,
-            }
+            house = await _make_house(p)
             houses.append(house)
             existing_urls.add(p["listing_url"])
             all_houses.append(house)
