@@ -1,7 +1,12 @@
+import asyncio
+import logging
 import mimetypes
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -12,7 +17,38 @@ from backend.tools.gmail import router as gmail_router
 from backend.tools.whatsapp import router as whatsapp_router
 from backend.houses import router as houses_router
 
-app = FastAPI(title="Sheggle Backend", version="0.1.0")
+log = logging.getLogger("sheggle.email_poll")
+
+POLL_INTERVAL = int(os.environ.get("EMAIL_POLL_INTERVAL", "60"))
+PP_API_KEY = os.environ.get("PP_API_KEY", "pp-dev-key-change-me")
+
+
+async def _email_poll_loop():
+    """Poll Gmail for new Overduyn house emails every POLL_INTERVAL seconds."""
+    await asyncio.sleep(10)  # let the app start up
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    "http://127.0.0.1:8000/api/pp/houses/check-email",
+                    headers={"X-PP-Key": PP_API_KEY},
+                )
+                data = resp.json()
+                if data.get("ingested", 0) > 0:
+                    log.info(f"Ingested {data['ingested']} new house(s)")
+        except Exception as e:
+            log.warning(f"Email poll error: {e}")
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_email_poll_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Sheggle Backend", version="0.1.0", lifespan=lifespan)
 
 # Allow the production site and local dev to call the API
 app.add_middleware(
