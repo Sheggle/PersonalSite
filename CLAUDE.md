@@ -6,13 +6,16 @@
 - **RipRaven**: Manga reader package in `ripraven/` (templates, downloader, pattern finder)
 - **PP (Peronsal Persistent)**: Todo + House decision API in `backend/pp.py` and `backend/houses.py`
 - **Tools**: General-purpose agent tools in `backend/tools/` (Gmail, WhatsApp)
-- **Data**: JSON file storage in `data/` (`pp_todos.json`, `pp_houses.json`, `ripraven/`)
+- **Nightly Agent**: Proposal review system in `backend/nightly.py` + `frontend/nightly.html`
+- **Data**: JSON file storage in `data/` (`pp_todos.json`, `pp_houses.json`, `nightly_proposals.json`, `ripraven/`)
 
 ## Key Routes
 - `/api/pp/todos` — Todo CRUD (auth: `X-PP-Key` header)
 - `/api/pp/houses` — House listing state machine (auth: `X-PP-Key`)
 - `/api/tools/gmail/messages` — Gmail read-only API (auth: `X-PP-Key`)
 - `/api/tools/whatsapp/send|messages|health` — WhatsApp proxy to Shelly bot (auth: `X-PP-Key`)
+- `/api/nightly/proposals` — Nightly agent proposal CRUD (auth: `X-PP-Key`)
+- `/api/nightly/runs` — Nightly run summaries (auth: `X-PP-Key`)
 - `/api/ripraven/` — Manga reader API
 - `/api/health` — Health check
 
@@ -42,4 +45,6 @@ States: `new → sent_to_gf → approved → booked` (reject from any)
 - `backend/tools/gmail.py` — Gmail API tool
 - `backend/tools/whatsapp.py` — WhatsApp proxy tool
 - `scripts/gmail_oauth_setup.py` — One-time Gmail OAuth setup
+- `backend/nightly.py` — Nightly agent proposal API with JSON storage
+- `frontend/nightly.html` — Nightly proposal review UI
 - `ripraven/web_reader.py` — RipRaven API

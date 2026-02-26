@@ -16,6 +16,7 @@ from backend.pp import router as pp_router
 from backend.tools.gmail import router as gmail_router
 from backend.tools.whatsapp import router as whatsapp_router
 from backend.houses import router as houses_router
+from backend.nightly import router as nightly_router
 
 log = logging.getLogger("sheggle.email_poll")
 
@@ -77,6 +78,9 @@ app.include_router(pp_router, prefix="/api/pp")
 
 # Include house decision routes (under PP)
 app.include_router(houses_router, prefix="/api/pp/houses")
+
+# Include nightly agent proposal routes
+app.include_router(nightly_router, prefix="/api/nightly")
 
 # Include general-purpose tool routes
 app.include_router(gmail_router, prefix="/api/tools/gmail")
@@ -181,6 +185,11 @@ def frontend_styles():
 @app.get("/rip_raven.html", include_in_schema=False)
 def legacy_ripraven_page():
     return _frontend_file("rip_raven.html")
+
+
+@app.get("/nightly", include_in_schema=False)
+def nightly_page():
+    return _frontend_file("nightly.html")
 
 
 @app.get("/api/health")
