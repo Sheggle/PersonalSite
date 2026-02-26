@@ -259,12 +259,14 @@ def pending_houses(_key: str = Depends(verify_api_key)):
 
 
 @router.post("", response_model=HouseListing, status_code=201)
-def create_house(body: HouseCreate, _key: str = Depends(verify_api_key)):
+async def create_house(body: HouseCreate, _key: str = Depends(verify_api_key)):
     houses = _read_houses()
     now = datetime.now(timezone.utc).isoformat()
+    travel = await _get_travel_time(body.address)
     house = {
         "id": uuid.uuid4().hex[:12],
         **body.model_dump(),
+        "travel_min": travel,
         "state": "new",
         "created_at": now,
         "decided_at": None,
