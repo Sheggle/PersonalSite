@@ -11,6 +11,8 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.push import register_device, send_silent_push
+
 router = APIRouter()
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -64,6 +66,10 @@ class HouseCreate(BaseModel):
 
 class HouseStateUpdate(BaseModel):
     state: str
+
+
+class DeviceToken(BaseModel):
+    token: str
 
 
 # --- Storage ---
@@ -243,6 +249,12 @@ async def _on_state_change(house: dict, new_state: str):
 # --- Endpoints ---
 
 
+@router.post("/devices")
+def register_device_token(body: DeviceToken, _key: str = Depends(verify_api_key)):
+    register_device(body.token)
+    return {"ok": True}
+
+
 @router.get("", response_model=list[HouseListing])
 def list_houses(state: str | None = Query(None), _key: str = Depends(verify_api_key)):
     houses = _read_houses()
@@ -273,6 +285,7 @@ async def create_house(body: HouseCreate, _key: str = Depends(verify_api_key)):
     }
     houses.append(house)
     _write_houses(houses)
+    await send_silent_push()
     return house
 
 
@@ -330,6 +343,7 @@ async def ingest_email(
 
     if created:
         _write_houses(houses)
+        await send_silent_push()
 
     return {"ingested": len(created), "houses": created}
 
@@ -434,5 +448,8 @@ async def check_email(_key: str = Depends(verify_api_key)):
 
         if all_houses:
             _write_houses(houses)
+
+    if total > 0:
+        await send_silent_push()
 
     return {"ingested": total, "houses": all_houses}
