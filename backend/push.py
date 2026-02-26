@@ -75,7 +75,7 @@ async def send_silent_push():
                         "apns-push-type": "background",
                         "apns-priority": "5",
                     },
-                    json={"aps": {"content-available": 1}},
+                    json={"aps": {"content-available": 1}, "type": "house-update"},
                 )
             except Exception:
                 pass
