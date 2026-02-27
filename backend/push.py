@@ -54,7 +54,7 @@ def _make_jwt() -> str:
     return jwt.encode(payload, key, algorithm="ES256", headers={"kid": APNS_KEY_ID})
 
 
-async def send_silent_push():
+async def send_silent_push(push_type: str = "house-update"):
     """Send a silent push to all registered devices."""
     token_str = _make_jwt()
     if not token_str:
@@ -75,7 +75,7 @@ async def send_silent_push():
                         "apns-push-type": "background",
                         "apns-priority": "5",
                     },
-                    json={"aps": {"content-available": 1}, "type": "house-update"},
+                    json={"aps": {"content-available": 1}, "type": push_type},
                 )
             except Exception:
                 pass

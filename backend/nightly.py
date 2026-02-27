@@ -1,5 +1,6 @@
 """Nightly Agent — Proposal API with JSON file storage."""
 
+import asyncio
 import json
 import os
 import uuid
@@ -8,6 +9,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
+
+from backend.push import send_silent_push
 
 router = APIRouter()
 
@@ -127,7 +130,7 @@ def create_proposal(body: ProposalCreate, _key: str = Depends(verify_api_key)):
 
 
 @router.post("/proposals/batch", response_model=list[Proposal], status_code=201)
-def create_proposals_batch(body: BatchCreate, _key: str = Depends(verify_api_key)):
+async def create_proposals_batch(body: BatchCreate, _key: str = Depends(verify_api_key)):
     proposals = _read_proposals()
     now = datetime.now(timezone.utc).isoformat()
     run_id = body.run_id or f"run-{uuid.uuid4().hex[:8]}"
@@ -146,6 +149,7 @@ def create_proposals_batch(body: BatchCreate, _key: str = Depends(verify_api_key
         created.append(proposal)
 
     _write_proposals(proposals)
+    asyncio.ensure_future(send_silent_push("nightly-update"))
     return created
 
 
