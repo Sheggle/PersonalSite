@@ -31,23 +31,36 @@ def verify_api_key(x_pp_key: str = Header(...)):
 # --- Models ---
 
 
+class Change(BaseModel):
+    file_path: str
+    diff: str
+
+
 class ProposalCreate(BaseModel):
     project: str
-    file_path: str
     title: str
-    diff: str
+    changes: list[Change]
     rationale: str
     source: str = "nightly"
     command: str | None = None
 
 
 class ProposalUpdate(BaseModel):
-    status: str  # "accepted" | "rejected" | "revision_requested"
+    status: str | None = None
     feedback: str | None = None
+    changes: list[Change] | None = None
+    title: str | None = None
+    rationale: str | None = None
 
 
-class Proposal(ProposalCreate):
+class Proposal(BaseModel):
     id: str
+    project: str
+    title: str
+    changes: list[Change]
+    rationale: str
+    source: str
+    command: str | None = None
     status: str
     created_at: str
     decided_at: str | None
@@ -69,6 +82,7 @@ class RunSummary(BaseModel):
     accepted: int
     rejected: int
     revision_requested: int = 0
+    completed: int = 0
 
 
 # --- Storage ---
@@ -77,7 +91,11 @@ class RunSummary(BaseModel):
 def _read_proposals() -> list[dict]:
     if not PROPOSALS_FILE.exists():
         return []
-    return json.loads(PROPOSALS_FILE.read_text())
+    proposals = json.loads(PROPOSALS_FILE.read_text())
+    for p in proposals:
+        if "changes" not in p and "file_path" in p:
+            p["changes"] = [{"file_path": p.pop("file_path"), "diff": p.pop("diff", "")}]
+    return proposals
 
 
 def _write_proposals(proposals: list[dict]):
@@ -156,24 +174,37 @@ async def create_proposals_batch(body: BatchCreate, _key: str = Depends(verify_a
     return created
 
 
+VALID_TRANSITIONS = {
+    "pending": {"accepted", "rejected", "revision_requested"},
+    "revision_requested": {"accepted", "rejected", "revision_requested", "pending"},
+    "accepted": {"completed"},
+}
+
+
 @router.patch("/proposals/{proposal_id}", response_model=Proposal)
 async def update_proposal(proposal_id: str, body: ProposalUpdate, _key: str = Depends(verify_api_key)):
-    valid = ("accepted", "rejected", "revision_requested")
-    if body.status not in valid:
-        raise HTTPException(status_code=400, detail=f"Status must be one of {valid}")
-
-    if body.status == "revision_requested" and not body.feedback:
-        raise HTTPException(status_code=400, detail="Feedback is required when requesting revision")
-
     proposals = _read_proposals()
     for p in proposals:
         if p["id"] == proposal_id:
-            if p["status"] not in ("pending", "revision_requested"):
-                raise HTTPException(status_code=400, detail=f"Proposal already {p['status']}")
-            p["status"] = body.status
-            p["decided_at"] = datetime.now(timezone.utc).isoformat()
+            if body.status is not None:
+                allowed = VALID_TRANSITIONS.get(p["status"], set())
+                if body.status not in allowed:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot transition from '{p['status']}' to '{body.status}'",
+                    )
+                if body.status == "revision_requested" and not body.feedback:
+                    raise HTTPException(status_code=400, detail="Feedback is required when requesting revision")
+                p["status"] = body.status
+                p["decided_at"] = datetime.now(timezone.utc).isoformat()
             if body.feedback is not None:
                 p["feedback"] = body.feedback
+            if body.changes is not None:
+                p["changes"] = [c.model_dump() for c in body.changes]
+            if body.title is not None:
+                p["title"] = body.title
+            if body.rationale is not None:
+                p["rationale"] = body.rationale
             _write_proposals(proposals)
             if body.status == "revision_requested":
                 asyncio.ensure_future(send_silent_push("nightly-update"))
@@ -184,9 +215,8 @@ async def update_proposal(proposal_id: str, body: ProposalUpdate, _key: str = De
 @router.patch("/runs/{run_id}", response_model=list[Proposal])
 async def update_run(run_id: str, body: ProposalUpdate, _key: str = Depends(verify_api_key)):
     """Batch accept/reject/revise all actionable proposals in a run."""
-    valid = ("accepted", "rejected", "revision_requested")
-    if body.status not in valid:
-        raise HTTPException(status_code=400, detail=f"Status must be one of {valid}")
+    if body.status is None:
+        raise HTTPException(status_code=400, detail="Status is required for batch updates")
 
     if body.status == "revision_requested" and not body.feedback:
         raise HTTPException(status_code=400, detail="Feedback is required when requesting revision")
@@ -195,7 +225,10 @@ async def update_run(run_id: str, body: ProposalUpdate, _key: str = Depends(veri
     now = datetime.now(timezone.utc).isoformat()
     updated = []
     for p in proposals:
-        if p["run_id"] == run_id and p["status"] in ("pending", "revision_requested"):
+        if p["run_id"] != run_id:
+            continue
+        allowed = VALID_TRANSITIONS.get(p["status"], set())
+        if body.status in allowed:
             p["status"] = body.status
             p["decided_at"] = now
             if body.feedback is not None:
@@ -227,6 +260,7 @@ def list_runs(_key: str = Depends(verify_api_key)):
                 "accepted": 0,
                 "rejected": 0,
                 "revision_requested": 0,
+                "completed": 0,
             }
         runs[rid]["total"] += 1
         runs[rid][p["status"]] += 1

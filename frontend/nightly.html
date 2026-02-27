@@ -56,6 +56,8 @@
       .diff-del { color: #f85149; }
       .diff-hunk { color: #79c0ff; }
       .status-revision_requested { background: #d29922; color: #fff; }
+      .status-completed { background: #1a7f37; color: #fff; }
+      .change-file { font-size: 0.8rem; color: #58a6ff; margin-top: 0.5rem; font-family: monospace; }
       .feedback-area {
         width: 100%; min-height: 60px; margin-top: 0.5rem;
         background: #0d1117; color: #e6edf3; border: 1px solid #30363d;
@@ -102,6 +104,7 @@
         <button data-filter="accepted">Accepted</button>
         <button data-filter="rejected">Rejected</button>
         <button data-filter="revision_requested">Revision</button>
+        <button data-filter="completed">Completed</button>
       </div>
 
       <div id="proposals"></div>
@@ -234,26 +237,30 @@
       }
 
       function renderCard(p) {
-        const diffHtml = highlightDiff(p.diff);
-        const diffId = `diff-${p.id}`;
         const fbId = `fb-${p.id}`;
         const isActionable = p.status === 'pending' || p.status === 'revision_requested';
         const feedbackDisplay = p.feedback
           ? `<div class="feedback-display"><div class="feedback-label">Feedback</div>${esc(p.feedback)}</div>`
           : '';
+        const changesHtml = (p.changes || []).map((c, i) => {
+          const diffId = `diff-${p.id}-${i}`;
+          return `<div class="change-file">${esc(c.file_path)}</div>
+            <button class="diff-toggle" onclick="toggleDiff('${diffId}')">Show diff</button>
+            <div class="diff-view" id="${diffId}">${highlightDiff(c.diff)}</div>`;
+        }).join('');
+        const fileSummary = (p.changes || []).map(c => esc(c.file_path)).join(', ');
         return `<div class="card" id="card-${p.id}">
           <div class="card-top">
             <div>
               <h3>${esc(p.title)}</h3>
               <div class="card-meta">
-                <span>${esc(p.file_path)}</span>
+                <span>${fileSummary}</span>
                 <span class="status-badge status-${p.status}">${p.status.replace('_', ' ')}</span>
                 ${p.source === 'command' ? `<span>cmd</span>` : ''}
               </div>
               <p class="rationale">${esc(p.rationale)}</p>
               ${feedbackDisplay}
-              <button class="diff-toggle" onclick="toggleDiff('${diffId}')">Show diff</button>
-              <div class="diff-view" id="${diffId}">${diffHtml}</div>
+              ${changesHtml}
               ${isActionable ? `<textarea class="feedback-area" id="${fbId}" placeholder="Feedback for revision..."></textarea>` : ''}
             </div>
             <div class="card-actions">
