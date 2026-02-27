@@ -1,28 +1,47 @@
-# PersonalSite
+# PersonalSite (sheggle.com)
 
-Personal website and API backend hosted at sheggle.com.
+Personal site and tools backend running at sheggle.com.
 
-Features:
-- `backend/app.py` — FastAPI with `/api/health` and the `/api/ripraven` integration
-- `frontend/index.html`, `frontend/styles.css` — static site hitting the backend
-- `ripraven/` — packaged comic reader mounted under `/api/ripraven`
+- `backend/app.py` — FastAPI app with all routes
+- `frontend/` — Static HTML pages (`index.html`, `nightly.html`)
+- `ripraven/` — Manga reader package mounted under `/api/ripraven`
+- `backend/pp.py` — Personal Persistent todo API
+- `backend/houses.py` — House decision state machine
+- `backend/nightly.py` — Nightly agent proposal system
+- `backend/tools/` — Agent tools (Gmail, WhatsApp)
 
 ## Local dev
 ```bash
 uv sync
 uv run uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
-# visit http://127.0.0.1:8000/ (serves the frontend and backend from one process)
-# RipRaven library: http://127.0.0.1:8000/ripraven
-# Reader deep link: http://127.0.0.1:8000/ripraven/<series>/<chapter>
+# http://127.0.0.1:8000/          — frontend
+# http://127.0.0.1:8000/ripraven  — manga reader
+# http://127.0.0.1:8000/nightly   — nightly proposal review UI
 ```
 
-## Server layout (recommended)
-Place the repo under `/srv/personalsite/`. Your existing `sheggle.service` should point
-to the backend working directory and start uvicorn on 127.0.0.1:8000.
+Set `PP_API_KEY` env var to authenticate API calls (default: `pp-dev-key-change-me`).
 
-Nginx should serve `/srv/personalsite/frontend` as web root and reverse-proxy `/api` to the backend.
+## API Overview
 
-Example Nginx:
+All authenticated endpoints require the `X-PP-Key` header.
+
+| Route | Description |
+|-------|-------------|
+| `GET /api/health` | Health check |
+| `/api/pp/todos` | Todo CRUD |
+| `/api/pp/houses` | House listing state machine |
+| `/api/tools/gmail/messages` | Gmail read-only |
+| `/api/tools/whatsapp/send\|messages\|health` | WhatsApp via Shelly bot |
+| `/api/nightly/proposals` | Nightly proposal CRUD |
+| `/api/nightly/runs` | Nightly run summaries |
+| `/api/ripraven/` | Manga reader API |
+
+## Server layout (sheggle.com)
+
+Repo lives at `/srv/personalsite/`. Service: `sheggle.service` (systemd, uvicorn on 127.0.0.1:8000).
+
+Nginx serves `frontend/` as web root and reverse-proxies `/api/` and `/ripraven` to port 8000.
+
 ```nginx
 server {
   listen 80;
@@ -40,6 +59,14 @@ server {
 
   location /api/ {
     proxy_pass http://127.0.0.1:8000/api/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location /ripraven {
+    proxy_pass http://127.0.0.1:8000/ripraven;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
