@@ -55,6 +55,24 @@
       .diff-add { color: #3fb950; }
       .diff-del { color: #f85149; }
       .diff-hunk { color: #79c0ff; }
+      .status-revision_requested { background: #d29922; color: #fff; }
+      .feedback-area {
+        width: 100%; min-height: 60px; margin-top: 0.5rem;
+        background: #0d1117; color: #e6edf3; border: 1px solid #30363d;
+        border-radius: 6px; padding: 0.6rem; font-size: 0.85rem;
+        resize: vertical; box-sizing: border-box; font-family: inherit;
+      }
+      .btn-revise { background: #d29922; }
+      .btn-revise:hover { background: #e3b341; }
+      .feedback-display {
+        margin-top: 0.5rem; padding: 0.5rem 0.8rem;
+        background: rgba(210, 153, 34, 0.1);
+        border-left: 3px solid #d29922; border-radius: 4px;
+        font-size: 0.85rem; color: #e6edf3;
+      }
+      .feedback-display .feedback-label {
+        font-size: 0.75rem; color: #d29922; font-weight: 600; margin-bottom: 0.2rem;
+      }
       .empty { text-align: center; color: #8b949e; padding: 3rem 0; }
       .auth-prompt {
         position: fixed; inset: 0; background: rgba(0,0,0,0.8);
@@ -83,6 +101,7 @@
         <button data-filter="pending">Pending</button>
         <button data-filter="accepted">Accepted</button>
         <button data-filter="rejected">Rejected</button>
+        <button data-filter="revision_requested">Revision</button>
       </div>
 
       <div id="proposals"></div>
@@ -187,7 +206,7 @@
           const date = new Date(items[0].created_at).toLocaleDateString('en-GB', {
             day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
           });
-          const hasPending = items.some(p => p.status === 'pending');
+          const hasActionable = items.some(p => p.status === 'pending' || p.status === 'revision_requested');
 
           html += `<div class="run-group">`;
           html += `<div class="run-header">
@@ -197,8 +216,9 @@
               <span>${items.length} proposal${items.length !== 1 ? 's' : ''}</span>
             </div>
             <div class="batch-btns">
-              ${hasPending ? `
+              ${hasActionable ? `
                 <button class="btn-accept" onclick="batchUpdate('${runId}','accepted')">Accept All</button>
+                <button class="btn-revise" onclick="batchRevise('${runId}')">Revise All</button>
                 <button class="btn-reject" onclick="batchUpdate('${runId}','rejected')">Reject All</button>
               ` : ''}
             </div>
@@ -216,22 +236,30 @@
       function renderCard(p) {
         const diffHtml = highlightDiff(p.diff);
         const diffId = `diff-${p.id}`;
+        const fbId = `fb-${p.id}`;
+        const isActionable = p.status === 'pending' || p.status === 'revision_requested';
+        const feedbackDisplay = p.feedback
+          ? `<div class="feedback-display"><div class="feedback-label">Feedback</div>${esc(p.feedback)}</div>`
+          : '';
         return `<div class="card" id="card-${p.id}">
           <div class="card-top">
             <div>
               <h3>${esc(p.title)}</h3>
               <div class="card-meta">
                 <span>${esc(p.file_path)}</span>
-                <span class="status-badge status-${p.status}">${p.status}</span>
+                <span class="status-badge status-${p.status}">${p.status.replace('_', ' ')}</span>
                 ${p.source === 'command' ? `<span>cmd</span>` : ''}
               </div>
               <p class="rationale">${esc(p.rationale)}</p>
+              ${feedbackDisplay}
               <button class="diff-toggle" onclick="toggleDiff('${diffId}')">Show diff</button>
               <div class="diff-view" id="${diffId}">${diffHtml}</div>
+              ${isActionable ? `<textarea class="feedback-area" id="${fbId}" placeholder="Feedback for revision..."></textarea>` : ''}
             </div>
             <div class="card-actions">
-              ${p.status === 'pending' ? `
+              ${isActionable ? `
                 <button class="btn-accept" onclick="updateProposal('${p.id}','accepted')">Accept</button>
+                <button class="btn-revise" onclick="reviseProposal('${p.id}')">Revise</button>
                 <button class="btn-reject" onclick="updateProposal('${p.id}','rejected')">Reject</button>
               ` : ''}
             </div>
@@ -262,14 +290,36 @@
       };
 
       window.updateProposal = async function(id, status) {
+        const fbEl = document.getElementById(`fb-${id}`);
+        const feedback = fbEl ? fbEl.value.trim() : '';
+        const body = { status };
+        if (feedback) body.feedback = feedback;
         try {
           await apiFetch(`/proposals/${id}`, {
             method: 'PATCH',
-            body: JSON.stringify({ status }),
+            body: JSON.stringify(body),
           });
           await load();
         } catch (e) {
           alert('Failed to update: ' + e.message);
+        }
+      };
+
+      window.reviseProposal = async function(id) {
+        const fbEl = document.getElementById(`fb-${id}`);
+        const feedback = fbEl ? fbEl.value.trim() : '';
+        if (!feedback) {
+          alert('Please enter feedback before requesting revision.');
+          return;
+        }
+        try {
+          await apiFetch(`/proposals/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'revision_requested', feedback }),
+          });
+          await load();
+        } catch (e) {
+          alert('Failed to request revision: ' + e.message);
         }
       };
 
@@ -282,6 +332,20 @@
           await load();
         } catch (e) {
           alert('Failed to update run: ' + e.message);
+        }
+      };
+
+      window.batchRevise = async function(runId) {
+        const feedback = prompt('Enter feedback for all pending proposals in this run:');
+        if (!feedback) return;
+        try {
+          await apiFetch(`/runs/${runId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'revision_requested', feedback }),
+          });
+          await load();
+        } catch (e) {
+          alert('Failed to request revision: ' + e.message);
         }
       };
 

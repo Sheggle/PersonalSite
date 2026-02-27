@@ -42,7 +42,8 @@ class ProposalCreate(BaseModel):
 
 
 class ProposalUpdate(BaseModel):
-    status: str  # "accepted" | "rejected"
+    status: str  # "accepted" | "rejected" | "revision_requested"
+    feedback: str | None = None
 
 
 class Proposal(ProposalCreate):
@@ -51,6 +52,7 @@ class Proposal(ProposalCreate):
     created_at: str
     decided_at: str | None
     run_id: str
+    feedback: str | None = None
 
 
 class BatchCreate(BaseModel):
@@ -66,6 +68,7 @@ class RunSummary(BaseModel):
     pending: int
     accepted: int
     rejected: int
+    revision_requested: int = 0
 
 
 # --- Storage ---
@@ -154,41 +157,57 @@ async def create_proposals_batch(body: BatchCreate, _key: str = Depends(verify_a
 
 
 @router.patch("/proposals/{proposal_id}", response_model=Proposal)
-def update_proposal(proposal_id: str, body: ProposalUpdate, _key: str = Depends(verify_api_key)):
-    if body.status not in ("accepted", "rejected"):
-        raise HTTPException(status_code=400, detail="Status must be 'accepted' or 'rejected'")
+async def update_proposal(proposal_id: str, body: ProposalUpdate, _key: str = Depends(verify_api_key)):
+    valid = ("accepted", "rejected", "revision_requested")
+    if body.status not in valid:
+        raise HTTPException(status_code=400, detail=f"Status must be one of {valid}")
+
+    if body.status == "revision_requested" and not body.feedback:
+        raise HTTPException(status_code=400, detail="Feedback is required when requesting revision")
 
     proposals = _read_proposals()
     for p in proposals:
         if p["id"] == proposal_id:
-            if p["status"] != "pending":
+            if p["status"] not in ("pending", "revision_requested"):
                 raise HTTPException(status_code=400, detail=f"Proposal already {p['status']}")
             p["status"] = body.status
             p["decided_at"] = datetime.now(timezone.utc).isoformat()
+            if body.feedback is not None:
+                p["feedback"] = body.feedback
             _write_proposals(proposals)
+            if body.status == "revision_requested":
+                asyncio.ensure_future(send_silent_push("nightly-update"))
             return p
     raise HTTPException(status_code=404, detail="Proposal not found")
 
 
 @router.patch("/runs/{run_id}", response_model=list[Proposal])
-def update_run(run_id: str, body: ProposalUpdate, _key: str = Depends(verify_api_key)):
-    """Batch accept/reject all pending proposals in a run."""
-    if body.status not in ("accepted", "rejected"):
-        raise HTTPException(status_code=400, detail="Status must be 'accepted' or 'rejected'")
+async def update_run(run_id: str, body: ProposalUpdate, _key: str = Depends(verify_api_key)):
+    """Batch accept/reject/revise all actionable proposals in a run."""
+    valid = ("accepted", "rejected", "revision_requested")
+    if body.status not in valid:
+        raise HTTPException(status_code=400, detail=f"Status must be one of {valid}")
+
+    if body.status == "revision_requested" and not body.feedback:
+        raise HTTPException(status_code=400, detail="Feedback is required when requesting revision")
 
     proposals = _read_proposals()
     now = datetime.now(timezone.utc).isoformat()
     updated = []
     for p in proposals:
-        if p["run_id"] == run_id and p["status"] == "pending":
+        if p["run_id"] == run_id and p["status"] in ("pending", "revision_requested"):
             p["status"] = body.status
             p["decided_at"] = now
+            if body.feedback is not None:
+                p["feedback"] = body.feedback
             updated.append(p)
 
     if not updated:
-        raise HTTPException(status_code=404, detail="No pending proposals found for this run")
+        raise HTTPException(status_code=404, detail="No actionable proposals found for this run")
 
     _write_proposals(proposals)
+    if body.status == "revision_requested":
+        asyncio.ensure_future(send_silent_push("nightly-update"))
     return updated
 
 
@@ -207,6 +226,7 @@ def list_runs(_key: str = Depends(verify_api_key)):
                 "pending": 0,
                 "accepted": 0,
                 "rejected": 0,
+                "revision_requested": 0,
             }
         runs[rid]["total"] += 1
         runs[rid][p["status"]] += 1
