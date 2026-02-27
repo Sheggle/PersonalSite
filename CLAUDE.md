@@ -48,3 +48,52 @@ States: `new → sent_to_gf → approved → booked` (reject from any)
 - `backend/nightly.py` — Nightly agent proposal API with JSON storage
 - `frontend/nightly.html` — Nightly proposal review UI
 - `ripraven/web_reader.py` — RipRaven API
+
+## Environment Variables
+
+Set in `/etc/systemd/system/sheggle.service` on sheggle.com:
+
+| Variable | Purpose |
+|----------|---------|
+| `PP_API_KEY` | Auth key for all `/api/pp/` and `/api/nightly/` endpoints |
+| `GMAPS_API_KEY` | Google Maps API (travel time in house listings) |
+| `APNS_KEY_ID` | APNs push notification key ID (XNY5F5NFLC) |
+| `APNS_TEAM_ID` | Apple Developer Team ID (3V7YQY3S3D) |
+| `APNS_KEY_PATH` | Path to `.p8` APNs key file (`/srv/personalsite/credentials/apns-key.p8`) |
+| `APNS_SANDBOX` | `true` for debug/dev iOS builds, `false` for TestFlight/App Store |
+
+## Health Check
+```bash
+curl https://sheggle.com/api/health
+ssh deploy@sheggle.com 'systemctl status sheggle.service'
+```
+
+## Logs
+```bash
+ssh deploy@sheggle.com 'journalctl -u sheggle.service -f'        # live
+ssh deploy@sheggle.com 'journalctl -u sheggle.service -n 200'    # last 200 lines
+```
+
+## Rollback
+```bash
+ssh deploy@sheggle.com
+cd /srv/personalsite
+git log --oneline -10
+git checkout <commit-hash>
+sudo systemctl restart sheggle.service
+curl localhost:8000/api/health
+```
+
+## Common Pitfalls
+- **Shelly bot down**: WhatsApp endpoints (`/api/tools/whatsapp/`) fail if 37.27.191.4:8100 is unreachable. Check: `ssh agent@37.27.191.4 'curl -s localhost:8100/health'`. If down, restart the Shelly service on the agent box.
+- **Gmail OAuth expired**: If Gmail calls return 401, re-run `uv run python scripts/gmail_oauth_setup.py` on sheggle.com. Credentials at `/srv/personalsite/credentials/`.
+- **JSON data corruption**: State lives in `data/*.json`. If a file is corrupt, service 500s on startup. Fix: `git show HEAD:data/<file>.json > data/<file>.json`, then restart.
+- **APNs sandbox mismatch**: Debug iOS builds need `APNS_SANDBOX=true`. TestFlight/App Store needs `APNS_SANDBOX=false`. Wrong value = silent push failures, no error in logs.
+
+## Nightly Agent Integration
+This service is the submission target for the nightly documentation agent:
+- Agent posts proposals to `POST /api/nightly/proposals/batch` with `X-PP-Key` header
+- Proposals stored in `data/nightly_proposals.json`
+- Review UI at `https://sheggle.com/nightly.html`
+- Accept/reject a proposal: `PATCH /api/nightly/proposals/{id}` with body `{"status": "accepted"}`
+- Bulk decide a run: `PATCH /api/nightly/runs/{run_id}`
