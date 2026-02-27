@@ -4,7 +4,7 @@
 - **Backend**: FastAPI (Python, managed with `uv`)
 - **Frontend**: Static HTML in `frontend/`
 - **RipRaven**: Manga reader package in `ripraven/` (templates, downloader, pattern finder)
-- **PP (Peronsal Persistent)**: Todo + House decision API in `backend/pp.py` and `backend/houses.py`
+- **PP (Personal Persistent)**: Todo + House decision API in `backend/pp.py` and `backend/houses.py`
 - **Tools**: General-purpose agent tools in `backend/tools/` (Gmail, WhatsApp)
 - **Nightly Agent**: Proposal review system in `backend/nightly.py` + `frontend/nightly.html`
 - **Data**: JSON file storage in `data/` (`pp_todos.json`, `pp_houses.json`, `nightly_proposals.json`, `ripraven/`)
