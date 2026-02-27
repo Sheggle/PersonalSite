@@ -1,6 +1,8 @@
-# Sheggle Starter
+# PersonalSite
 
-Minimal starter for sheggle.com:
+Personal website and API backend hosted at sheggle.com.
+
+Features:
 - `backend/app.py` — FastAPI with `/api/health` and the `/api/ripraven` integration
 - `frontend/index.html`, `frontend/styles.css` — static site hitting the backend
 - `ripraven/` — packaged comic reader mounted under `/api/ripraven`
