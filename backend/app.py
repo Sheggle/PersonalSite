@@ -192,6 +192,11 @@ def nightly_page():
     return _frontend_file("nightly.html")
 
 
+@app.get("/fons-guide", include_in_schema=False)
+def fons_guide_page():
+    return _frontend_file("fons-guide.html")
+
+
 @app.get("/api/health")
 def health():
     return JSONResponse({"ok": True, "service": "sheggle-backend"})
