@@ -193,8 +193,18 @@ def nightly_page():
 
 
 @app.get("/fons-guide", include_in_schema=False)
-def fons_guide_page():
-    return _frontend_file("fons-guide.html")
+def fons_guide_redirect():
+    return RedirectResponse(url="/fons-guide/v2", status_code=307)
+
+
+@app.get("/fons-guide/v1", include_in_schema=False)
+def fons_guide_v1():
+    return _frontend_file("fons-guide-v1.html")
+
+
+@app.get("/fons-guide/v2", include_in_schema=False)
+def fons_guide_v2():
+    return _frontend_file("fons-guide-v2.html")
 
 
 @app.get("/api/health")
