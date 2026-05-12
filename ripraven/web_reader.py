@@ -222,6 +222,14 @@ class RipRavenAPI:
                 series_url=parsed['series_url'],
                 source_url=req.url,
             )
+            # Seed Recently Read with the imported chapter so the user has a
+            # one-click path to read it as soon as the userscript catches up.
+            self.save_recent_chapter(RecentChapter(
+                series=parsed['series_name'],
+                chapter=parsed['chapter_num'],
+                last_read=datetime.now().isoformat(),
+                page_position=0,
+            ))
             return TrackResponse(
                 series_slug=parsed['series_slug'],
                 series_name=parsed['series_name'],
