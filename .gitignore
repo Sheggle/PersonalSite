@@ -52,6 +52,8 @@ Thumbs.db
 # RipRaven user data - exclude downloads and reading history
 data/ripraven/downloads/
 data/ripraven/recent_chapters.json
+data/ripraven/tracking.json
+data/ripraven/chapter_cache.json
 
 # But keep the directory structure
 !data/.gitkeep

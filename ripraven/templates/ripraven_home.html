@@ -267,20 +267,29 @@
       <p>Select a series to jump straight into the reader or browse recent chapters.</p>
     </header>
     <main>
-      <!-- Import New Manga Section -->
+      <!-- Track New Manga Section -->
       <div class="import-section">
-        <h2>📥 Import New Manga</h2>
+        <h2>📥 Track New Manga</h2>
         <div class="import-form">
           <input
             type="url"
             id="mangaUrl"
-            placeholder="Paste RavenScans URL (e.g., https://ravenscans.org/manga-name-chapter-1/)"
+            placeholder="Paste any chapter URL (e.g., https://ravenscans.org/manga-name-chapter-1/)"
             value=""
           />
-          <button id="importBtn" onclick="importManga()">Import</button>
+          <button id="importBtn" onclick="importManga()">Track</button>
         </div>
         <div class="import-status" id="importStatus"></div>
+        <p style="margin: 0.5rem 0 0; color: #888; font-size: 0.85rem;">
+          Downloads happen in a tab open to ravenscans.org with the
+          <a href="/api/ripraven/static/ripraven.user.js" style="color: #58a6ff;">ripraven userscript</a> installed (Tampermonkey).
+        </p>
       </div>
+
+      <section id="trackedSection" class="recents-section" style="display: none;">
+        <h2>⬇️ Tracking</h2>
+        <div id="trackedList"></div>
+      </section>
 
       <section id="recentsSection" class="recents-section" style="display: none;">
         <h2>📖 Recently Read</h2>
@@ -424,6 +433,56 @@
         }
       }
 
+      async function loadTracked() {
+        const section = document.getElementById('trackedSection');
+        const list = document.getElementById('trackedList');
+        try {
+          const r = await fetch('/api/ripraven/tracked');
+          if (!r.ok) throw new Error('failed');
+          const tracked = await r.json();
+          // Only show series that aren't fully done locally.
+          const pending = tracked.filter(t =>
+            !t.has_chapter_list || t.downloaded_chapters < t.total_chapters
+          );
+          if (!pending.length) {
+            section.style.display = 'none';
+            return false;
+          }
+          section.style.display = '';
+          list.innerHTML = '';
+          pending.forEach(t => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; align-items:center; gap:0.75rem; padding:0.4rem 0; border-bottom:1px solid #222; font-size:0.9rem;';
+            const label = t.has_chapter_list
+              ? `${t.downloaded_chapters} / ${t.total_chapters} chapters`
+              : 'waiting for chapter list…';
+            row.innerHTML = `
+              <span style="flex:1; color:#eee;">${t.series_name.replace(/_/g, ' ')}</span>
+              <span style="color:#888;">${label}</span>
+            `;
+            list.appendChild(row);
+          });
+          return true;
+        } catch {
+          section.style.display = 'none';
+          return false;
+        }
+      }
+
+      // Poll while there's pending work so the home page reflects progress.
+      let pollHandle = null;
+      function startTrackingPoll() {
+        if (pollHandle) return;
+        pollHandle = setInterval(async () => {
+          const stillPending = await loadTracked();
+          await loadSeries();
+          if (!stillPending) {
+            clearInterval(pollHandle);
+            pollHandle = null;
+          }
+        }, 5000);
+      }
+
       // Import manga functionality
       async function importManga() {
         const urlInput = document.getElementById("mangaUrl");
@@ -443,7 +502,7 @@
         statusDiv.style.color = "#cccccc";
 
         try {
-          const response = await fetch("/api/ripraven/import-manga", {
+          const response = await fetch("/api/ripraven/track", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -457,13 +516,14 @@
             statusDiv.textContent = `✅ ${result.message}`;
             statusDiv.style.color = "#4caf50";
             urlInput.value = "";
-            // Reload series after successful import
             setTimeout(() => {
               loadSeries();
+              loadTracked();
+              startTrackingPoll();
               statusDiv.textContent = "";
-            }, 2000);
+            }, 3000);
           } else {
-            statusDiv.textContent = `❌ ${result.detail || "Import failed"}`;
+            statusDiv.textContent = `❌ ${result.detail || "Tracking failed"}`;
             statusDiv.style.color = "#ff6b6b";
           }
         } catch (error) {
@@ -484,6 +544,7 @@
       });
 
       loadSeries();
+      loadTracked().then(pending => { if (pending) startTrackingPoll(); });
     </script>
   </body>
 </html>

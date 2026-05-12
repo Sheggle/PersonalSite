@@ -90,6 +90,12 @@ curl localhost:8000/api/health
 - **JSON data corruption**: State lives in `data/*.json`. If a file is corrupt, service 500s on startup. Fix: `git show HEAD:data/<file>.json > data/<file>.json`, then restart.
 - **APNs sandbox mismatch**: Debug iOS builds need `APNS_SANDBOX=true`. TestFlight/App Store needs `APNS_SANDBOX=false`. Wrong value = silent push failures, no error in logs.
 
+## RipRaven import flow
+- Both ravenscans.org chapter pages AND `cdnN.ravenscans.org` are behind a Cloudflare managed challenge. Every server-side fetch we've tried fails (requests, curl_cffi impersonations, playwright + xvfb, patchright, nodriver — all stall on "Just a moment..."). A May 2026 workaround that probed the CDN directly worked for ~3 months until CF was extended to the CDN too.
+- Architecture: server can't fetch, so the Tampermonkey userscript at `GET /api/ripraven/static/ripraven.user.js` does it. It runs on any `https://ravenscans.org/*` page (where CF is already solved by the browser), polls `GET /api/ripraven/queue` for one work item at a time, fetches HTML / images via `GM_xmlhttpRequest` (cookies + TLS fingerprint come from the real browser), and uploads to sheggle.com.
+- Server endpoints: `POST /track` registers a series from any chapter URL. `GET /queue` returns one of `{type: 'chapter-list', series_url}` (when chapter list is missing) or `{type: 'chapter', chapter_url, chapter_num}` (when a chapter is missing on disk). Latest-chapter-first ordering. `POST /series/<slug>/chapter-list` and `POST /series/<slug>/chapters/<num>/pages` (multipart) receive results. `POST /queue/release` returns a failed claim to the pool. Claim tokens hold each item for 5 min to prevent races between multiple ravenscans tabs.
+- State: `data/ripraven/tracking.json` (series being tracked), `data/ripraven/chapter_cache.json` (chapter lists, userscript-populated), `data/ripraven/downloads/<Series>/chapter_<n>/{N.jpg, ..., completed}` (downloaded pages, with `completed` marker file).
+
 ## Nightly Agent Integration
 This service is the submission target for the nightly documentation agent:
 - Agent posts proposals to `POST /api/nightly/proposals/batch` with `X-PP-Key` header
