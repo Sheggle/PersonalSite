@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import time
+import threading
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -127,11 +128,16 @@ class RipRavenAPI:
         self._worker_task = None
 
         # In-process cache for the /series response. With ~33 series on SSHFS,
-        # a cold scan_series() round-trips into Hetzner Storage Box and takes
-        # ~5s; we cache for 30s so steady-state response is <100ms.
+        # a cold scan_series() can take 30-60s; we cache + serve in a
+        # threadpool so the event loop is never blocked on the SSHFS walk.
         self._series_cache: Optional[List[SeriesInfo]] = None
         self._series_cache_at: float = 0.0
-        self._SERIES_TTL_S = 30.0
+        # TTL is generous because the only writer is the in-process
+        # worker (which can invalidate the cache directly when it
+        # saves a chapter). Long TTL keeps SSHFS round-trips off the
+        # hot path.
+        self._SERIES_TTL_S = 300.0
+        self._series_scan_lock = threading.Lock()
 
     async def start_worker(self):
         """Spawn the Cloudflare-bypass background worker. Idempotent."""
@@ -151,12 +157,28 @@ class RipRavenAPI:
         asyncio.create_task(asyncio.to_thread(self._scan_series_cached))
 
     def _scan_series_cached(self) -> List[SeriesInfo]:
+        # Stale-but-fresh: if we have ANY cached value, return it instantly
+        # and refresh in the background. The /series response no longer
+        # blocks on a slow SSHFS walk after the first successful scan.
         now = time.monotonic()
-        if self._series_cache is not None and (now - self._series_cache_at) < self._SERIES_TTL_S:
-            return self._series_cache
-        self._series_cache = self.scan_series()
-        self._series_cache_at = now
-        return self._series_cache
+        fresh = self._series_cache is not None and (now - self._series_cache_at) < self._SERIES_TTL_S
+        if fresh:
+            return self._series_cache  # type: ignore[return-value]
+        # Lock prevents N concurrent scans from one cache miss.
+        with self._series_scan_lock:
+            now = time.monotonic()
+            fresh = self._series_cache is not None and (now - self._series_cache_at) < self._SERIES_TTL_S
+            if fresh:
+                return self._series_cache  # type: ignore[return-value]
+            result = self.scan_series()
+            self._series_cache = result
+            # Mark freshness AFTER scan finishes — otherwise a scan slower
+            # than the TTL would never appear cached.
+            self._series_cache_at = time.monotonic()
+            return result
+
+    def _invalidate_series_cache(self) -> None:
+        self._series_cache_at = 0.0
 
     async def stop_worker(self):
         if self._worker_task is not None:
@@ -234,7 +256,9 @@ class RipRavenAPI:
         @self.router.get("/series", response_model=List[SeriesInfo])
         async def get_series():
             try:
-                return self._scan_series_cached()
+                # Run the (potentially slow) SSHFS scan in a worker thread
+                # so it never blocks the event loop / other endpoints.
+                return await asyncio.to_thread(self._scan_series_cached)
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
@@ -434,42 +458,49 @@ class RipRavenAPI:
 
     # ----- local filesystem helpers ---------------------------------------
 
+    def _scan_one_series(self, series_dir: Path) -> Optional[SeriesInfo]:
+        chapters = []
+        try:
+            entries = list(series_dir.iterdir())
+        except OSError:
+            return None
+        for chapter_dir in entries:
+            page_count = 0
+            is_complete = False
+            try:
+                for entry in chapter_dir.iterdir():
+                    name = entry.name
+                    if name == COMPLETION_MARKER:
+                        is_complete = True
+                    elif _has_image_extension(name):
+                        page_count += 1
+            except OSError:
+                continue
+            chapters.append(ChapterInfo(
+                name=chapter_dir.name,
+                is_complete=is_complete,
+                page_count=page_count,
+                last_modified="",
+            ))
+        chapters.sort(key=lambda x: natural_sort_key(x.name))
+        return SeriesInfo(name=series_dir.name, chapters=chapters)
+
     def scan_series(self) -> List[SeriesInfo]:
         if not self.downloads_dir.exists():
             return []
 
-        # One iterdir() per chapter, no per-file stat: check both the
-        # completion marker and image count by name alone. The previous
-        # implementation did ~50 stats per chapter, which after the cold-
-        # storage migration sent each over SSHFS and pushed /series to ~10s.
-        series_list = []
-        for series_dir in self.downloads_dir.iterdir():
-            if not series_dir.is_dir() and not series_dir.is_symlink():
-                continue
-            chapters = []
-            for chapter_dir in series_dir.iterdir():
-                if not chapter_dir.is_dir():
-                    continue
-                page_count = 0
-                is_complete = False
-                try:
-                    for entry in chapter_dir.iterdir():
-                        name = entry.name
-                        if name == COMPLETION_MARKER:
-                            is_complete = True
-                        elif _has_image_extension(name):
-                            page_count += 1
-                except OSError:
-                    pass
-                chapters.append(ChapterInfo(
-                    name=chapter_dir.name,
-                    is_complete=is_complete,
-                    page_count=page_count,
-                    last_modified="",
-                ))
-            chapters.sort(key=lambda x: natural_sort_key(x.name))
-            series_list.append(SeriesInfo(name=series_dir.name, chapters=chapters))
-
+        # Each series dir lives behind an SSHFS round-trip. Walk them in
+        # parallel — Storage Box happily handles concurrent reads and this
+        # turns ~50s of serial waiting into a few seconds dominated by the
+        # slowest single directory.
+        roots = [d for d in self.downloads_dir.iterdir()
+                 if d.is_dir() or d.is_symlink()]
+        from concurrent.futures import ThreadPoolExecutor
+        series_list: List[SeriesInfo] = []
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            for info in pool.map(self._scan_one_series, roots):
+                if info is not None:
+                    series_list.append(info)
         series_list.sort(key=lambda x: x.name)
         return series_list
 
