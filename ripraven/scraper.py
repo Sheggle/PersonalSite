@@ -10,6 +10,7 @@ We keep one persistent context alive; cf_clearance carries across calls. On a
 import asyncio
 import logging
 import re
+import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -59,11 +60,36 @@ class CFScraper:
             await self._pw.stop()
             self._pw = None
 
+    async def reset(self):
+        """Close browser and wipe the persistent profile.
+
+        After ~100 successful chapters Cloudflare started 403-ing every image
+        on this profile, even after Turnstile re-clicks — a 'sticky' bot cookie
+        in the jar. Wiping the profile forces a clean re-solve from scratch
+        and recovers reliably.
+        """
+        await self.close()
+        try:
+            if self.profile_dir.exists():
+                shutil.rmtree(self.profile_dir)
+                self.profile_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("🦅 cf-scraper: wiped profile dir %s", self.profile_dir)
+        except Exception:
+            logger.exception("could not wipe profile dir")
+
     async def _ensure_started(self):
         if self._ctx is None:
             await self.start()
 
     async def _solve(self, url: str) -> bool:
+        """Navigate to URL and clear any Cloudflare challenge.
+
+        Returns True only if we end up on a real ravenscans page — verified
+        both by title (no longer 'Just a moment...') AND by content (HTML
+        contains either a cdn ravenscans image URL or 'ravenscans.org' link).
+        Without the content check we'd report success when CF served us its
+        'Sorry, you have been blocked' page (different title, no content).
+        """
         assert self._page
         try:
             await self._page.goto(url, timeout=30_000, wait_until='domcontentloaded')
@@ -76,7 +102,15 @@ class CFScraper:
             except Exception:
                 title = ''
             if 'Just a moment' not in title and title.strip():
-                return True
+                # Sanity-check: was this actually a chapter / series page?
+                try:
+                    html = await self._page.content()
+                except Exception:
+                    html = ''
+                if IMAGE_URL_RE.search(html) or 'ravenscans-content' in html or 'wp-content' in html:
+                    return True
+                logger.warning("🦅 cf-scraper: title cleared (%r) but content looks blocked at %s", title, url)
+                return False
             try:
                 await self._page.mouse.move(100 + i * 5, 200 + i * 3)
             except Exception:
@@ -122,7 +156,7 @@ class CFScraper:
                 raise RuntimeError(f"no image URLs in {chapter_url}")
 
             pages: List[Tuple[str, bytes]] = []
-            for u in urls:
+            for i, u in enumerate(urls):
                 r = await self._ctx.request.get(u, headers={'Referer': RAVENSCANS_HOME})
                 if r.status == 403:
                     await self._solve(chapter_url)
@@ -132,4 +166,9 @@ class CFScraper:
                 body = await r.body()
                 name = u.rsplit('/', 1)[-1].split('?')[0]
                 pages.append((name, body))
+                # Small jitter between image fetches — running flat-out at
+                # ~300 images/min triggers Cloudflare's adaptive rate-limit
+                # after ~100 chapters and the profile gets sticky-blocked.
+                if i < len(urls) - 1:
+                    await asyncio.sleep(0.15)
             return pages
