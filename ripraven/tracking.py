@@ -102,8 +102,8 @@ class TrackingState:
 
         For each tracked series in insertion order:
         - If we have no cached chapter list, emit a `chapter-list` task.
-        - Otherwise emit `chapter` tasks for the missing chapters, latest-first
-          (so the bleeding edge is fetched before backfill).
+        - Otherwise emit `chapter` tasks for the missing chapters in series
+          order (oldest missing first), so backfill reads ch 1 → N.
 
         Already-claimed item ids are skipped. Items returned carry a fresh
         claim_token; failures must POST /queue/release with it.
@@ -130,8 +130,8 @@ class TrackingState:
                 })
                 continue
 
-            # Latest first so the reader's current chapter gets priority.
-            for ch in reversed(chapters):
+            # Oldest first — backfill in reading order from chapter 1 up.
+            for ch in chapters:
                 if len(items) >= limit:
                     break
                 ch_num = str(ch['number'])

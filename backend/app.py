@@ -45,8 +45,18 @@ async def _email_poll_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(_email_poll_loop())
+    if ripraven_api is not None:
+        try:
+            await ripraven_api.start_worker()
+        except Exception as e:
+            log.warning(f"ripraven worker failed to start: {e}")
     yield
     task.cancel()
+    if ripraven_api is not None:
+        try:
+            await ripraven_api.stop_worker()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="Sheggle Backend", version="0.1.0", lifespan=lifespan)

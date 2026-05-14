@@ -13,6 +13,7 @@ at GET /api/ripraven/static/ripraven.user.js. The server's job is reduced to:
   - serving the reader UI against the resulting on-disk library.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -115,6 +116,36 @@ class RipRavenAPI:
         self.reader_template, self.home_template = self._load_templates()
         self.router = APIRouter()
         self.setup_routes()
+
+        self._scraper = None
+        self._worker_task = None
+
+    async def start_worker(self):
+        """Spawn the Cloudflare-bypass background worker. Idempotent."""
+        if self._worker_task is not None and not self._worker_task.done():
+            return
+        from .scraper import CFScraper
+        from .worker import run_worker
+        self._scraper = CFScraper()
+        self._worker_task = asyncio.create_task(run_worker(
+            self._scraper,
+            self.tracking,
+            self.chapter_cache,
+            self.downloads_dir,
+            self._chapter_is_complete,
+        ))
+
+    async def stop_worker(self):
+        if self._worker_task is not None:
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._worker_task = None
+        if self._scraper is not None:
+            await self._scraper.close()
+            self._scraper = None
 
     def _load_templates(self) -> tuple[str, str]:
         try:
