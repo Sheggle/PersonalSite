@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -104,6 +105,11 @@ IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
 COMPLETION_MARKER = "completed"
 
 
+def _has_image_extension(name: str) -> bool:
+    dot = name.rfind('.')
+    return dot != -1 and name[dot:].lower() in IMAGE_EXTENSIONS
+
+
 class RipRavenAPI:
     def __init__(self, downloads_dir: str | Path = "../data/ripraven/downloads"):
         self.downloads_dir = Path(downloads_dir)
@@ -120,6 +126,13 @@ class RipRavenAPI:
         self._scraper = None
         self._worker_task = None
 
+        # In-process cache for the /series response. With ~33 series on SSHFS,
+        # a cold scan_series() round-trips into Hetzner Storage Box and takes
+        # ~5s; we cache for 30s so steady-state response is <100ms.
+        self._series_cache: Optional[List[SeriesInfo]] = None
+        self._series_cache_at: float = 0.0
+        self._SERIES_TTL_S = 30.0
+
     async def start_worker(self):
         """Spawn the Cloudflare-bypass background worker. Idempotent."""
         if self._worker_task is not None and not self._worker_task.done():
@@ -134,6 +147,16 @@ class RipRavenAPI:
             self.downloads_dir,
             self._chapter_is_complete,
         ))
+        # Pre-warm the /series cache so the first home-page load is fast.
+        asyncio.create_task(asyncio.to_thread(self._scan_series_cached))
+
+    def _scan_series_cached(self) -> List[SeriesInfo]:
+        now = time.monotonic()
+        if self._series_cache is not None and (now - self._series_cache_at) < self._SERIES_TTL_S:
+            return self._series_cache
+        self._series_cache = self.scan_series()
+        self._series_cache_at = now
+        return self._series_cache
 
     async def stop_worker(self):
         if self._worker_task is not None:
@@ -211,7 +234,7 @@ class RipRavenAPI:
         @self.router.get("/series", response_model=List[SeriesInfo])
         async def get_series():
             try:
-                return self.scan_series()
+                return self._scan_series_cached()
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
@@ -415,10 +438,10 @@ class RipRavenAPI:
         if not self.downloads_dir.exists():
             return []
 
-        # The homepage only uses chapter.name + count; reader endpoints recompute
-        # page_count themselves. We previously did one stat per image and an
-        # iterdir per chapter, which after the cold-storage migration meant a
-        # round-trip per file over SSHFS and `/series` taking ~10s.
+        # One iterdir() per chapter, no per-file stat: check both the
+        # completion marker and image count by name alone. The previous
+        # implementation did ~50 stats per chapter, which after the cold-
+        # storage migration sent each over SSHFS and pushed /series to ~10s.
         series_list = []
         for series_dir in self.downloads_dir.iterdir():
             if not series_dir.is_dir() and not series_dir.is_symlink():
@@ -427,10 +450,21 @@ class RipRavenAPI:
             for chapter_dir in series_dir.iterdir():
                 if not chapter_dir.is_dir():
                     continue
+                page_count = 0
+                is_complete = False
+                try:
+                    for entry in chapter_dir.iterdir():
+                        name = entry.name
+                        if name == COMPLETION_MARKER:
+                            is_complete = True
+                        elif _has_image_extension(name):
+                            page_count += 1
+                except OSError:
+                    pass
                 chapters.append(ChapterInfo(
                     name=chapter_dir.name,
-                    is_complete=True,
-                    page_count=0,
+                    is_complete=is_complete,
+                    page_count=page_count,
                     last_modified="",
                 ))
             chapters.sort(key=lambda x: natural_sort_key(x.name))
