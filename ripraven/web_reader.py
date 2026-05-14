@@ -415,28 +415,23 @@ class RipRavenAPI:
         if not self.downloads_dir.exists():
             return []
 
+        # The homepage only uses chapter.name + count; reader endpoints recompute
+        # page_count themselves. We previously did one stat per image and an
+        # iterdir per chapter, which after the cold-storage migration meant a
+        # round-trip per file over SSHFS and `/series` taking ~10s.
         series_list = []
         for series_dir in self.downloads_dir.iterdir():
-            if not series_dir.is_dir():
+            if not series_dir.is_dir() and not series_dir.is_symlink():
                 continue
             chapters = []
             for chapter_dir in series_dir.iterdir():
                 if not chapter_dir.is_dir():
                     continue
-                is_complete = (chapter_dir / COMPLETION_MARKER).exists()
-                page_count = sum(
-                    1 for f in chapter_dir.iterdir()
-                    if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-                )
-                try:
-                    last_modified = datetime.fromtimestamp(chapter_dir.stat().st_mtime).isoformat()
-                except Exception:
-                    last_modified = datetime.now().isoformat()
                 chapters.append(ChapterInfo(
                     name=chapter_dir.name,
-                    is_complete=is_complete,
-                    page_count=page_count,
-                    last_modified=last_modified,
+                    is_complete=True,
+                    page_count=0,
+                    last_modified="",
                 ))
             chapters.sort(key=lambda x: natural_sort_key(x.name))
             series_list.append(SeriesInfo(name=series_dir.name, chapters=chapters))
