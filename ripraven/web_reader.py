@@ -17,8 +17,6 @@ import asyncio
 import json
 import logging
 import re
-import time
-import threading
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -29,6 +27,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from .pattern_finder import ChapterListCache, parse_chapter_url
+from .series_index import SeriesIndex
 from .tracking import TrackingState
 
 logger = logging.getLogger(__name__)
@@ -106,11 +105,6 @@ IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
 COMPLETION_MARKER = "completed"
 
 
-def _has_image_extension(name: str) -> bool:
-    dot = name.rfind('.')
-    return dot != -1 and name[dot:].lower() in IMAGE_EXTENSIONS
-
-
 class RipRavenAPI:
     def __init__(self, downloads_dir: str | Path = "../data/ripraven/downloads"):
         self.downloads_dir = Path(downloads_dir)
@@ -119,6 +113,10 @@ class RipRavenAPI:
 
         self.chapter_cache = ChapterListCache(data_dir)
         self.tracking = TrackingState(data_dir)
+        # Persistent mirror of {series → {chapter → meta}} so /series never
+        # walks the (SSHFS-backed) downloads tree on the hot path. Writers
+        # update entries in place; readers serve from RAM.
+        self.series_index = SeriesIndex(data_dir, self.downloads_dir)
 
         self.reader_template, self.home_template = self._load_templates()
         self.router = APIRouter()
@@ -126,18 +124,6 @@ class RipRavenAPI:
 
         self._scraper = None
         self._worker_task = None
-
-        # In-process cache for the /series response. With ~33 series on SSHFS,
-        # a cold scan_series() can take 30-60s; we cache + serve in a
-        # threadpool so the event loop is never blocked on the SSHFS walk.
-        self._series_cache: Optional[List[SeriesInfo]] = None
-        self._series_cache_at: float = 0.0
-        # TTL is generous because the only writer is the in-process
-        # worker (which can invalidate the cache directly when it
-        # saves a chapter). Long TTL keeps SSHFS round-trips off the
-        # hot path.
-        self._SERIES_TTL_S = 300.0
-        self._series_scan_lock = threading.Lock()
 
     async def start_worker(self):
         """Spawn the Cloudflare-bypass background worker. Idempotent."""
@@ -152,33 +138,8 @@ class RipRavenAPI:
             self.chapter_cache,
             self.downloads_dir,
             self._chapter_is_complete,
+            self.series_index,
         ))
-        # Pre-warm the /series cache so the first home-page load is fast.
-        asyncio.create_task(asyncio.to_thread(self._scan_series_cached))
-
-    def _scan_series_cached(self) -> List[SeriesInfo]:
-        # Stale-but-fresh: if we have ANY cached value, return it instantly
-        # and refresh in the background. The /series response no longer
-        # blocks on a slow SSHFS walk after the first successful scan.
-        now = time.monotonic()
-        fresh = self._series_cache is not None and (now - self._series_cache_at) < self._SERIES_TTL_S
-        if fresh:
-            return self._series_cache  # type: ignore[return-value]
-        # Lock prevents N concurrent scans from one cache miss.
-        with self._series_scan_lock:
-            now = time.monotonic()
-            fresh = self._series_cache is not None and (now - self._series_cache_at) < self._SERIES_TTL_S
-            if fresh:
-                return self._series_cache  # type: ignore[return-value]
-            result = self.scan_series()
-            self._series_cache = result
-            # Mark freshness AFTER scan finishes — otherwise a scan slower
-            # than the TTL would never appear cached.
-            self._series_cache_at = time.monotonic()
-            return result
-
-    def _invalidate_series_cache(self) -> None:
-        self._series_cache_at = 0.0
 
     async def stop_worker(self):
         if self._worker_task is not None:
@@ -256,9 +217,7 @@ class RipRavenAPI:
         @self.router.get("/series", response_model=List[SeriesInfo])
         async def get_series():
             try:
-                # Run the (potentially slow) SSHFS scan in a worker thread
-                # so it never blocks the event loop / other endpoints.
-                return await asyncio.to_thread(self._scan_series_cached)
+                return self.scan_series()
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
@@ -393,6 +352,9 @@ class RipRavenAPI:
                 saved += 1
 
             (chapter_dir / COMPLETION_MARKER).write_text(datetime.now().isoformat())
+            self.series_index.update_chapter(
+                series_name, f"chapter_{chapter_num}", chapter_dir,
+            )
             if claim_token:
                 self.tracking.release(claim_token)
 
@@ -458,49 +420,23 @@ class RipRavenAPI:
 
     # ----- local filesystem helpers ---------------------------------------
 
-    def _scan_one_series(self, series_dir: Path) -> Optional[SeriesInfo]:
-        chapters = []
-        try:
-            entries = list(series_dir.iterdir())
-        except OSError:
-            return None
-        for chapter_dir in entries:
-            page_count = 0
-            is_complete = False
-            try:
-                for entry in chapter_dir.iterdir():
-                    name = entry.name
-                    if name == COMPLETION_MARKER:
-                        is_complete = True
-                    elif _has_image_extension(name):
-                        page_count += 1
-            except OSError:
-                continue
-            chapters.append(ChapterInfo(
-                name=chapter_dir.name,
-                is_complete=is_complete,
-                page_count=page_count,
-                last_modified="",
-            ))
-        chapters.sort(key=lambda x: natural_sort_key(x.name))
-        return SeriesInfo(name=series_dir.name, chapters=chapters)
-
     def scan_series(self) -> List[SeriesInfo]:
-        if not self.downloads_dir.exists():
-            return []
-
-        # Each series dir lives behind an SSHFS round-trip. Walk them in
-        # parallel — Storage Box happily handles concurrent reads and this
-        # turns ~50s of serial waiting into a few seconds dominated by the
-        # slowest single directory.
-        roots = [d for d in self.downloads_dir.iterdir()
-                 if d.is_dir() or d.is_symlink()]
-        from concurrent.futures import ThreadPoolExecutor
+        # Reads from the in-memory mirror populated by SeriesIndex; no
+        # filesystem walk, no SSHFS round-trips. The index is updated in
+        # place each time a chapter is written.
         series_list: List[SeriesInfo] = []
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            for info in pool.map(self._scan_one_series, roots):
-                if info is not None:
-                    series_list.append(info)
+        for series_name, chapters_map in self.series_index.list_all().items():
+            chapters = [
+                ChapterInfo(
+                    name=ch_name,
+                    is_complete=bool(meta.get("is_complete")),
+                    page_count=int(meta.get("page_count", 0)),
+                    last_modified=meta.get("last_modified") or "",
+                )
+                for ch_name, meta in chapters_map.items()
+            ]
+            chapters.sort(key=lambda x: natural_sort_key(x.name))
+            series_list.append(SeriesInfo(name=series_name, chapters=chapters))
         series_list.sort(key=lambda x: x.name)
         return series_list
 

@@ -14,6 +14,7 @@ from typing import Callable
 
 from .scraper import CFScraper
 from .pattern_finder import ChapterListCache
+from .series_index import SeriesIndex
 from .tracking import TrackingState
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,8 @@ async def _one_cycle(scraper: CFScraper,
                      tracking: TrackingState,
                      chapter_cache: ChapterListCache,
                      downloads_dir: Path,
-                     is_complete: Callable[[str, str], bool]) -> bool:
+                     is_complete: Callable[[str, str], bool],
+                     series_index: SeriesIndex) -> bool:
     for slug, info in tracking.list().items():
         series_name = info['series_name']
         chapters = chapter_cache.get_chapters(series_name)
@@ -64,6 +66,7 @@ async def _one_cycle(scraper: CFScraper,
             for fname, data in pages:
                 (chapter_dir / fname).write_bytes(data)
             (chapter_dir / "completed").write_text(datetime.now().isoformat())
+            series_index.update_chapter(series_name, f"chapter_{ch_num}", chapter_dir)
             logger.info("✅ %s ch %s: saved %d pages", series_name, ch_num, len(pages))
             return True
     return False
@@ -80,7 +83,8 @@ async def run_worker(scraper: CFScraper,
                      tracking: TrackingState,
                      chapter_cache: ChapterListCache,
                      downloads_dir: Path,
-                     is_complete: Callable[[str, str], bool]):
+                     is_complete: Callable[[str, str], bool],
+                     series_index: SeriesIndex):
     logger.info("🦅 ripraven worker: starting")
     consecutive_failures = 0
     chapters_since_reset = 0
@@ -92,7 +96,7 @@ async def run_worker(scraper: CFScraper,
                 await asyncio.sleep(IDLE_SLEEP_S)
                 continue
 
-            did_work = await _one_cycle(scraper, tracking, chapter_cache, downloads_dir, is_complete)
+            did_work = await _one_cycle(scraper, tracking, chapter_cache, downloads_dir, is_complete, series_index)
             consecutive_failures = 0
             if did_work:
                 chapters_since_reset += 1
