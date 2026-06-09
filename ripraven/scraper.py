@@ -12,7 +12,7 @@ import logging
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from patchright.async_api import async_playwright, BrowserContext, Page
 
@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 CHAPTER_HREF_RE = re.compile(r'href="(https?://ravenscans\.org/[^"]*?-chapter-(\d+(?:-\d+)?)[^"]*?)"')
 IMAGE_URL_RE = re.compile(r'https://cdn\d+\.ravenscans\.org/[^"\s\'>)]+\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 RAVENSCANS_HOME = 'https://ravenscans.org/'
+# Cloudflare sometimes tarpits an individual image fetch: 200 OK headers
+# arrive but the body never finishes. A healthy image (~300 KB) completes in
+# well under a second, so time out fast and retry instead of burning the
+# default 30s on a dead transfer.
+IMAGE_FETCH_TIMEOUT_MS = 15_000
+IMAGE_FETCH_ATTEMPTS = 3
 
 
 def _natural_sort_key(text: str):
@@ -143,7 +149,50 @@ class CFScraper:
             raise RuntimeError(f"no chapters parsed from {series_url}")
         return chapters
 
-    async def fetch_chapter_pages(self, chapter_url: str) -> List[Tuple[str, bytes]]:
+    async def _fetch_image(self, url: str, chapter_url: str) -> bytes:
+        """Fetch one image with retries.
+
+        Cloudflare intermittently stalls a transfer (headers arrive, body
+        never completes). Retrying the same URL almost always succeeds, so a
+        stall costs one short timeout instead of failing the whole chapter.
+        """
+        last_err: Optional[Exception] = None
+        for attempt in range(1, IMAGE_FETCH_ATTEMPTS + 1):
+            try:
+                r = await self._ctx.request.get(
+                    url, headers={'Referer': RAVENSCANS_HOME},
+                    timeout=IMAGE_FETCH_TIMEOUT_MS,
+                )
+                if r.status == 403:
+                    await self._solve(chapter_url)
+                    r = await self._ctx.request.get(
+                        url, headers={'Referer': RAVENSCANS_HOME},
+                        timeout=IMAGE_FETCH_TIMEOUT_MS,
+                    )
+                if r.status != 200:
+                    raise RuntimeError(f"HTTP {r.status} fetching {url}")
+                body = await r.body()
+                if not body:
+                    raise RuntimeError(f"empty body for {url}")
+                return body
+            except Exception as e:
+                last_err = e
+                logger.warning("🦅 image fetch %d/%d failed for %s: %s",
+                               attempt, IMAGE_FETCH_ATTEMPTS, url, e)
+                if attempt == IMAGE_FETCH_ATTEMPTS - 1:
+                    # Two stalls in a row on the same image — refresh the CF
+                    # session before the final attempt.
+                    try:
+                        await self._solve(chapter_url)
+                    except Exception:
+                        pass
+                await asyncio.sleep(attempt)
+        raise RuntimeError(f"could not fetch {url} after {IMAGE_FETCH_ATTEMPTS} attempts: {last_err}")
+
+    async def fetch_chapter_pages(self, chapter_url: str, save_dir: Path) -> int:
+        """Download every page of a chapter into save_dir, skipping files
+        already on disk so an interrupted chapter resumes instead of
+        restarting. Returns the total page count of the chapter."""
         await self._ensure_started()
         async with self._lock:
             ok = await self._solve(chapter_url)
@@ -155,20 +204,16 @@ class CFScraper:
             if not urls:
                 raise RuntimeError(f"no image URLs in {chapter_url}")
 
-            pages: List[Tuple[str, bytes]] = []
+            save_dir.mkdir(parents=True, exist_ok=True)
             for i, u in enumerate(urls):
-                r = await self._ctx.request.get(u, headers={'Referer': RAVENSCANS_HOME})
-                if r.status == 403:
-                    await self._solve(chapter_url)
-                    r = await self._ctx.request.get(u, headers={'Referer': RAVENSCANS_HOME})
-                if r.status != 200:
-                    raise RuntimeError(f"HTTP {r.status} fetching {u}")
-                body = await r.body()
                 name = u.rsplit('/', 1)[-1].split('?')[0]
-                pages.append((name, body))
+                out_path = save_dir / name
+                if out_path.exists() and out_path.stat().st_size > 0:
+                    continue
+                out_path.write_bytes(await self._fetch_image(u, chapter_url))
                 # Small jitter between image fetches — running flat-out at
                 # ~300 images/min triggers Cloudflare's adaptive rate-limit
                 # after ~100 chapters and the profile gets sticky-blocked.
                 if i < len(urls) - 1:
                     await asyncio.sleep(0.15)
-            return pages
+            return len(urls)

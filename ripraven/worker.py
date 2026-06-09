@@ -60,14 +60,11 @@ async def _one_cycle(scraper: CFScraper,
             if is_complete(series_name, ch_num):
                 continue
             logger.info("📥 fetching %s ch %s", series_name, ch_num)
-            pages = await scraper.fetch_chapter_pages(ch['url'])
             chapter_dir = downloads_dir / series_name / f"chapter_{ch_num}"
-            chapter_dir.mkdir(parents=True, exist_ok=True)
-            for fname, data in pages:
-                (chapter_dir / fname).write_bytes(data)
+            page_count = await scraper.fetch_chapter_pages(ch['url'], chapter_dir)
             (chapter_dir / "completed").write_text(datetime.now().isoformat())
             series_index.update_chapter(series_name, f"chapter_{ch_num}", chapter_dir)
-            logger.info("✅ %s ch %s: saved %d pages", series_name, ch_num, len(pages))
+            logger.info("✅ %s ch %s: %d pages on disk", series_name, ch_num, page_count)
             return True
     return False
 
