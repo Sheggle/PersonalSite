@@ -27,6 +27,10 @@ RAVENSCANS_HOME = 'https://ravenscans.org/'
 # default 30s on a dead transfer.
 IMAGE_FETCH_TIMEOUT_MS = 15_000
 IMAGE_FETCH_ATTEMPTS = 3
+# Concurrent image fetches within a chapter. Modest on purpose: running
+# flat-out at ~300 images/min triggers Cloudflare's adaptive rate-limit after
+# ~100 chapters and the profile gets sticky-blocked.
+IMAGE_CONCURRENCY = 3
 
 
 def _natural_sort_key(text: str):
@@ -41,6 +45,9 @@ class CFScraper:
         self._ctx: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._lock = asyncio.Lock()
+        # Serializes _solve calls from concurrent image fetches — the shared
+        # page can only navigate one URL at a time.
+        self._solve_lock = asyncio.Lock()
 
     async def start(self):
         if self._ctx is not None:
@@ -164,7 +171,8 @@ class CFScraper:
                     timeout=IMAGE_FETCH_TIMEOUT_MS,
                 )
                 if r.status == 403:
-                    await self._solve(chapter_url)
+                    async with self._solve_lock:
+                        await self._solve(chapter_url)
                     r = await self._ctx.request.get(
                         url, headers={'Referer': RAVENSCANS_HOME},
                         timeout=IMAGE_FETCH_TIMEOUT_MS,
@@ -183,7 +191,8 @@ class CFScraper:
                     # Two stalls in a row on the same image — refresh the CF
                     # session before the final attempt.
                     try:
-                        await self._solve(chapter_url)
+                        async with self._solve_lock:
+                            await self._solve(chapter_url)
                     except Exception:
                         pass
                 await asyncio.sleep(attempt)
@@ -205,15 +214,23 @@ class CFScraper:
                 raise RuntimeError(f"no image URLs in {chapter_url}")
 
             save_dir.mkdir(parents=True, exist_ok=True)
-            for i, u in enumerate(urls):
+            sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
+
+            async def _download(u: str):
                 name = u.rsplit('/', 1)[-1].split('?')[0]
                 out_path = save_dir / name
                 if out_path.exists() and out_path.stat().st_size > 0:
-                    continue
-                out_path.write_bytes(await self._fetch_image(u, chapter_url))
-                # Small jitter between image fetches — running flat-out at
-                # ~300 images/min triggers Cloudflare's adaptive rate-limit
-                # after ~100 chapters and the profile gets sticky-blocked.
-                if i < len(urls) - 1:
+                    return
+                async with sem:
+                    body = await self._fetch_image(u, chapter_url)
+                    out_path.write_bytes(body)
+                    # Small jitter per fetch keeps the burst rate below
+                    # Cloudflare's adaptive rate-limit.
                     await asyncio.sleep(0.15)
+
+            results = await asyncio.gather(*(_download(u) for u in urls),
+                                           return_exceptions=True)
+            errors = [r for r in results if isinstance(r, BaseException)]
+            if errors:
+                raise errors[0]
             return len(urls)
