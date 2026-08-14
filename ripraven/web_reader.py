@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """RipRaven Web Comic Reader — FastAPI backend.
 
-Architecture note: ravenscans.org and its image CDNs are behind a Cloudflare
-managed challenge that blocks every server-side fetch we've tried (requests,
-curl_cffi impersonation, headless playwright/patchright/nodriver). All chapter
-discovery and image fetching now run in the user's browser via the userscript
-at GET /api/ripraven/static/ripraven.user.js. The server's job is reduced to:
-
-  - registering tracked series (POST /track),
-  - handing out work batches to the userscript (GET /queue),
-  - accepting the userscript's uploads (chapter-list, chapter pages),
-  - serving the reader UI against the resulting on-disk library.
+The server does the fetching itself: a background worker (`worker.py` +
+`scraper.py`) walks the tracked series and fills the on-disk library, and this
+module serves the reader UI against it. The queue endpoints plus the
+userscript at GET /api/ripraven/static/ripraven.user.js are the browser-side
+fallback, for if ravenscans ever puts a bot challenge back in front of the
+server.
 """
 
 import asyncio
@@ -21,6 +17,7 @@ from datetime import datetime
 from importlib import resources
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
@@ -82,7 +79,7 @@ class TrackRequest(BaseModel):
 class TrackResponse(BaseModel):
     series_slug: str
     series_name: str
-    chapter_num: str
+    chapter_num: Optional[str]
     message: str
 
 
@@ -126,12 +123,12 @@ class RipRavenAPI:
         self._worker_task = None
 
     async def start_worker(self):
-        """Spawn the Cloudflare-bypass background worker. Idempotent."""
+        """Spawn the library-filling background worker. Idempotent."""
         if self._worker_task is not None and not self._worker_task.done():
             return
-        from .scraper import CFScraper
+        from .scraper import RavenScraper
         from .worker import run_worker
-        self._scraper = CFScraper()
+        self._scraper = RavenScraper()
         self._worker_task = asyncio.create_task(run_worker(
             self._scraper,
             self.tracking,
@@ -152,6 +149,34 @@ class RipRavenAPI:
         if self._scraper is not None:
             await self._scraper.close()
             self._scraper = None
+
+    async def _seed_chapter_list(self, series_name: str, series_url: str,
+                                 chapter_url: str) -> Optional[str]:
+        """Cache the series' chapter list and return the number of the chapter
+        the import URL points at.
+
+        Chapter URLs carry an opaque post id, so the series page is the only
+        place that maps them to chapter numbers. Doing it here also means the
+        worker can start downloading on its next pass instead of spending one
+        first. Best effort — the worker scrapes the list itself either way.
+        """
+        from .scraper import RavenScraper
+        scraper = self._scraper or RavenScraper()
+        try:
+            chapters = await scraper.scrape_chapter_list(series_url)
+        except Exception:
+            logger.warning("could not read chapter list for %s", series_name, exc_info=True)
+            return None
+        finally:
+            if scraper is not self._scraper:
+                await scraper.close()
+
+        self.chapter_cache.set_chapters(series_name, chapters, series_url)
+        wanted = urlparse(chapter_url).path.rstrip('/')
+        for ch in chapters:
+            if urlparse(ch['url']).path.rstrip('/') == wanted:
+                return str(ch['number'])
+        return None
 
     def _load_templates(self) -> tuple[str, str]:
         try:
@@ -251,7 +276,7 @@ class RipRavenAPI:
             if not parsed:
                 raise HTTPException(
                     status_code=400,
-                    detail="URL must look like https://ravenscans.org/<series>-chapter-<n>/",
+                    detail="URL must look like https://ravenscans.net/series/<series>/chapter-<id>/",
                 )
             self.tracking.add(
                 series_slug=parsed['series_slug'],
@@ -259,23 +284,23 @@ class RipRavenAPI:
                 series_url=parsed['series_url'],
                 source_url=req.url,
             )
-            # Seed Recently Read with the imported chapter so the user has a
-            # one-click path to read it as soon as the userscript catches up.
-            self.save_recent_chapter(RecentChapter(
-                series=parsed['series_name'],
-                chapter=parsed['chapter_num'],
-                last_read=datetime.now().isoformat(),
-                page_position=0,
-            ))
+            chapter_num = parsed['chapter_num'] or await self._seed_chapter_list(
+                parsed['series_name'], parsed['series_url'], req.url,
+            )
+            if chapter_num:
+                # Seed Recently Read with the imported chapter so the user has
+                # a one-click path to it as soon as the worker catches up.
+                self.save_recent_chapter(RecentChapter(
+                    series=parsed['series_name'],
+                    chapter=chapter_num,
+                    last_read=datetime.now().isoformat(),
+                    page_position=0,
+                ))
             return TrackResponse(
                 series_slug=parsed['series_slug'],
                 series_name=parsed['series_name'],
-                chapter_num=parsed['chapter_num'],
-                message=(
-                    f"Now tracking {parsed['series_name']}. "
-                    "Open a ravenscans.org tab with the ripraven userscript installed "
-                    "to start downloading."
-                ),
+                chapter_num=chapter_num,
+                message=f"Now tracking {parsed['series_name']}. Downloading starts shortly.",
             )
 
         @self.router.get("/tracked")

@@ -1,4 +1,4 @@
-"""Background worker: drive CFScraper against the TrackingState.
+"""Background worker: drive RavenScraper against the TrackingState.
 
 Walks each tracked series in insertion order and downloads one missing
 chapter per series per pass (oldest first), so a freshly tracked series
@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .scraper import CFScraper
+from .scraper import RavenScraper
 from .pattern_finder import ChapterListCache
 from .series_index import SeriesIndex
 from .tracking import TrackingState
@@ -22,57 +22,73 @@ logger = logging.getLogger(__name__)
 
 IDLE_SLEEP_S = 60
 ERROR_SLEEP_S = 30
-# Chapter-to-chapter cooldown, jittered. Periodic timing is a Cloudflare
-# anti-bot signal; humans don't read with metronome regularity.
-WORK_SLEEP_MIN_S = 4
-WORK_SLEEP_MAX_S = 9
-# Wipe the patchright profile proactively every N successful chapters. Long
-# before this we'd see a sticky block (~100 chapters on this IP), so we cycle
-# the cookie jar before that threshold.
-CHAPTERS_PER_RESET = 75
-# After this many consecutive failures we throw away the Chrome session so the
-# next cycle launches a fresh one (covers Chrome crashes, dead pages, expired
-# context). Re-solving the challenge from scratch is cheap compared to retrying
-# against a wedged browser indefinitely.
-RESET_AFTER_FAILURES = 3
+# Chapter-to-chapter cooldown, jittered — politeness towards the source, not
+# a technical requirement.
+WORK_SLEEP_MIN_S = 2
+WORK_SLEEP_MAX_S = 5
+# Re-scrape a series' chapter list once it is this old, so new releases get
+# picked up. Series pages list every chapter, so a refresh is one request.
+CHAPTER_LIST_TTL_S = 6 * 3600
 # Stop downloading new chapters when free disk falls below this. The reader
 # UI still works against what's already on disk; the worker just goes idle
 # until space is freed.
 MIN_FREE_DISK_MB = 500
 
 
-async def _one_cycle(scraper: CFScraper,
+async def _one_series(scraper: RavenScraper,
+                      info: dict,
+                      chapter_cache: ChapterListCache,
+                      downloads_dir: Path,
+                      is_complete: Callable[[str, str], bool],
+                      series_index: SeriesIndex) -> int:
+    """Refresh one series' chapter list if due, then fetch at most one of its
+    missing chapters. Returns the number of work items completed."""
+    series_name = info['series_name']
+    done = 0
+
+    if chapter_cache.is_stale(series_name, CHAPTER_LIST_TTL_S):
+        logger.info("📚 scraping chapter list for %s", series_name)
+        new = await scraper.scrape_chapter_list(info['series_url'])
+        chapter_cache.set_chapters(series_name, new, info['series_url'])
+        logger.info("📚 cached %d chapters for %s", len(new), series_name)
+        done += 1
+
+    for ch in chapter_cache.get_chapters(series_name) or []:
+        ch_num = str(ch['number'])
+        if is_complete(series_name, ch_num):
+            continue
+        logger.info("📥 fetching %s ch %s", series_name, ch_num)
+        chapter_dir = downloads_dir / series_name / f"chapter_{ch_num}"
+        page_count = await scraper.fetch_chapter_pages(ch['url'], chapter_dir)
+        (chapter_dir / "completed").write_text(datetime.now().isoformat())
+        series_index.update_chapter(series_name, f"chapter_{ch_num}", chapter_dir)
+        logger.info("✅ %s ch %s: %d pages on disk", series_name, ch_num, page_count)
+        done += 1
+        await asyncio.sleep(random.uniform(WORK_SLEEP_MIN_S, WORK_SLEEP_MAX_S))
+        break
+
+    return done
+
+
+async def _one_cycle(scraper: RavenScraper,
                      tracking: TrackingState,
                      chapter_cache: ChapterListCache,
                      downloads_dir: Path,
                      is_complete: Callable[[str, str], bool],
                      series_index: SeriesIndex) -> int:
-    """One pass over all tracked series; at most one chapter (or one chapter
-    list) per series. Returns the number of work items completed."""
+    """One pass over all tracked series. A series that fails (deleted upstream,
+    a chapter whose pages won't load) is logged and skipped so it cannot stall
+    the rest of the library."""
     done = 0
     for slug, info in tracking.list().items():
-        series_name = info['series_name']
-        chapters = chapter_cache.get_chapters(series_name)
-        if not chapters:
-            logger.info("📚 scraping chapter list for %s", series_name)
-            new = await scraper.scrape_chapter_list(info['series_url'])
-            chapter_cache.set_chapters(series_name, new, info['series_url'])
-            logger.info("📚 cached %d chapters for %s", len(new), series_name)
-            done += 1
-            continue
-        for ch in chapters:
-            ch_num = str(ch['number'])
-            if is_complete(series_name, ch_num):
-                continue
-            logger.info("📥 fetching %s ch %s", series_name, ch_num)
-            chapter_dir = downloads_dir / series_name / f"chapter_{ch_num}"
-            page_count = await scraper.fetch_chapter_pages(ch['url'], chapter_dir)
-            (chapter_dir / "completed").write_text(datetime.now().isoformat())
-            series_index.update_chapter(series_name, f"chapter_{ch_num}", chapter_dir)
-            logger.info("✅ %s ch %s: %d pages on disk", series_name, ch_num, page_count)
-            done += 1
-            await asyncio.sleep(random.uniform(WORK_SLEEP_MIN_S, WORK_SLEEP_MAX_S))
-            break
+        try:
+            done += await _one_series(
+                scraper, info, chapter_cache, downloads_dir, is_complete, series_index,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("🦅 worker: series %s failed this pass", slug)
     return done
 
 
@@ -83,15 +99,13 @@ def _free_mb(path: Path) -> int:
         return 1 << 30  # if we can't tell, don't block
 
 
-async def run_worker(scraper: CFScraper,
+async def run_worker(scraper: RavenScraper,
                      tracking: TrackingState,
                      chapter_cache: ChapterListCache,
                      downloads_dir: Path,
                      is_complete: Callable[[str, str], bool],
                      series_index: SeriesIndex):
     logger.info("🦅 ripraven worker: starting")
-    consecutive_failures = 0
-    chapters_since_reset = 0
     while True:
         try:
             free = _free_mb(downloads_dir)
@@ -101,30 +115,11 @@ async def run_worker(scraper: CFScraper,
                 continue
 
             done = await _one_cycle(scraper, tracking, chapter_cache, downloads_dir, is_complete, series_index)
-            consecutive_failures = 0
-            if done:
-                chapters_since_reset += done
-                if chapters_since_reset >= CHAPTERS_PER_RESET:
-                    logger.info("🦅 worker: proactive profile rotation after %d chapters", chapters_since_reset)
-                    try:
-                        await scraper.reset()
-                    except Exception:
-                        logger.exception("proactive scraper.reset failed")
-                    chapters_since_reset = 0
-            else:
+            if not done:
                 await asyncio.sleep(IDLE_SLEEP_S)
         except asyncio.CancelledError:
             logger.info("🦅 ripraven worker: cancelled")
             raise
         except Exception:
-            consecutive_failures += 1
-            logger.exception("worker cycle error (%d consecutive)", consecutive_failures)
-            if consecutive_failures >= RESET_AFTER_FAILURES:
-                logger.warning("🦅 worker: wiping profile after %d failures", consecutive_failures)
-                try:
-                    await scraper.reset()
-                except Exception:
-                    logger.exception("scraper.reset failed")
-                consecutive_failures = 0
-                chapters_since_reset = 0
+            logger.exception("worker cycle error")
             await asyncio.sleep(ERROR_SLEEP_S)

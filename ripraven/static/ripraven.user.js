@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         ripraven catch-up
 // @namespace    https://sheggle.com/ripraven
-// @version      0.1.0
-// @description  Browser-side downloader for ripraven (sheggle.com). Runs on any ravenscans.org page and feeds the local library while Cloudflare blocks the server.
+// @version      0.2.0
+// @description  Browser-side downloader for ripraven (sheggle.com). Runs on any ravenscans page and feeds the local library from the browser, for when the server itself is blocked.
+// @match        https://ravenscans.net/*
 // @match        https://ravenscans.org/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      sheggle.com
+// @connect      ravenscans.net
 // @connect      ravenscans.org
 // @connect      cdn1.ravenscans.org
 // @connect      cdn2.ravenscans.org
@@ -116,12 +118,17 @@
 
     // ---- work handlers ------------------------------------------------------
 
-    function sortByTrailingNumber(urls) {
-        const numOf = u => {
-            const m = u.match(/\/(\d+)\.[a-z]+$/i);
-            return m ? parseInt(m[1], 10) : 999999;
-        };
-        return [...urls].sort((a, b) => numOf(a) - numOf(b));
+    // Chapter pages hand the reader its pages as a ts_reader.run({...}) blob,
+    // already in reading order — more reliable than scraping <img> tags.
+    function chapterImages(html) {
+        const m = html.match(/ts_reader\.run\((\{[\s\S]*?\})\);/);
+        if (!m) throw new Error('no ts_reader payload on chapter page');
+        const sources = JSON.parse(m[1]).sources || [];
+        for (const source of sources) {
+            const images = (source.images || []).filter(Boolean);
+            if (images.length) return images;
+        }
+        return [];
     }
 
     function extName(url) {
@@ -138,16 +145,19 @@
         setStatus(`scraping chapter list`, item.series_slug);
         const html = await getText(item.series_url);
 
-        // ravenscans links chapters like /series-name-chapter-10/ or /...-chapter-1-1/
-        const re = /href="(https?:\/\/ravenscans\.org\/[^"]*?-chapter-(\d+(?:-\d+)?)[^"]*?)"/g;
+        // Series pages list every chapter as
+        //   <li data-num="12.1"> … <a href=".../chapter-<id>/">
+        // where data-num is the chapter number and the href carries only an
+        // opaque post id.
+        const re = /<li[^>]*\bdata-num="([^"]+)"[^>]*>[\s\S]*?<a[^>]+href="([^"]*\/chapter-[^"]*?)"/g;
         const seen = new Set();
         const chapters = [];
         let m;
         while ((m = re.exec(html)) !== null) {
-            const num = m[2].replace('-', '.');
-            if (seen.has(num)) continue;
+            const num = m[1].trim();
+            if (!num || seen.has(num)) continue;
             seen.add(num);
-            chapters.push({ number: num, url: m[1] });
+            chapters.push({ number: num, url: m[2] });
         }
         if (!chapters.length) throw new Error('no chapter links on series page');
 
@@ -162,9 +172,7 @@
     async function handleChapter(item) {
         setStatus(`fetching ch ${item.chapter_num}`, item.series_slug);
         const html = await getText(item.chapter_url);
-
-        const imgRe = /https:\/\/cdn\d+\.ravenscans\.org\/[^"'\s)>]+\.(?:jpg|jpeg|png|webp)/gi;
-        const urls = sortByTrailingNumber(Array.from(new Set(html.match(imgRe) || [])));
+        const urls = chapterImages(html);
         if (!urls.length) throw new Error(`no image urls in chapter ${item.chapter_num}`);
 
         const form = new FormData();

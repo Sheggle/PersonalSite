@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """URL parsing + chapter list cache for RipRaven.
 
-All ravenscans.org and cdnN.ravenscans.org endpoints are behind a Cloudflare
-managed challenge, so the server cannot fetch them. Chapter discovery and image
-fetching now happen client-side via the Tampermonkey userscript at
-`static/ripraven.user.js`. This module is reduced to pure URL parsing and the
-on-disk chapter list cache that the userscript writes into.
+Chapter URL shapes, both accepted:
+
+  https://ravenscans.net/series/city-of-sins/chapter-524502/   (current)
+  https://ravenscans.org/city-of-sins-chapter-1/               (pre-move)
+
+The current shape carries an opaque post id where the old one carried the
+chapter number, so `chapter_num` is None for it — the number lives only in the
+series page's chapter list, which the scraper reads.
 """
 
 import json
@@ -19,29 +22,36 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
-CHAPTER_URL_RE = re.compile(r'/([^/]+)-chapter-(\d+(?:-\d+)?)/?$')
+CHAPTER_URL_RE = re.compile(r'^/series/([^/]+)/chapter-[^/]+/?$')
+LEGACY_CHAPTER_URL_RE = re.compile(r'^/([^/]+)-chapter-(\d+(?:-\d+)?)/?$')
 
 
 def parse_chapter_url(url: str) -> Optional[dict]:
-    """Extract series slug + chapter number from a ravenscans chapter URL.
+    """Extract series slug (+ chapter number where the URL carries one).
 
-    Returns ``{'series_slug': 'past-life-returner', 'series_name': 'Past_Life_Returner',
-    'chapter_num': '1.1', 'series_url': 'https://ravenscans.org/manga/past-life-returner/'}``
+    Returns ``{'series_slug': 'city-of-sins', 'series_name': 'City_Of_Sins',
+    'chapter_num': None, 'series_url': 'https://ravenscans.net/series/city-of-sins/'}``
     or None if the URL doesn't look like a chapter.
 
-    Fractional chapter slugs use hyphen form (``chapter-1-1`` for 1.1).
+    Pre-move URLs spell fractional chapters in hyphen form (``chapter-1-1``
+    for 1.1).
     """
     path = urlparse(url).path
-    m = CHAPTER_URL_RE.search(path)
-    if not m:
-        return None
-    series_slug = m.group(1)
-    chapter_num = m.group(2).replace('-', '.')
+    m = CHAPTER_URL_RE.match(path)
+    chapter_num = None
+    if m:
+        series_slug = m.group(1)
+    else:
+        m = LEGACY_CHAPTER_URL_RE.match(path)
+        if not m:
+            return None
+        series_slug = m.group(1)
+        chapter_num = m.group(2).replace('-', '.')
     return {
         'series_slug': series_slug,
         'series_name': series_slug.replace('-', '_').title().replace(' ', '_'),
         'chapter_num': chapter_num,
-        'series_url': f"https://ravenscans.org/manga/{series_slug}/",
+        'series_url': f"https://ravenscans.net/series/{series_slug}/",
     }
 
 
@@ -97,6 +107,21 @@ class ChapterListCache:
             'last_updated': datetime.now().isoformat(),
         }
         self._save_cache()
+
+    def is_stale(self, series_name: str, max_age_seconds: float) -> bool:
+        """True when the cached list is older than max_age_seconds.
+
+        Chapter lists grow. A series cached once and never refreshed silently
+        stops catching up, so the worker re-scrapes on this signal.
+        """
+        entry = self._cache.get(self._normalize_series_key(series_name))
+        if not entry:
+            return True
+        try:
+            cached_at = datetime.fromisoformat(entry['last_updated'])
+        except (KeyError, TypeError, ValueError):
+            return True
+        return (datetime.now() - cached_at).total_seconds() >= max_age_seconds
 
     def get_series_url(self, series_name: str) -> Optional[str]:
         entry = self._cache.get(self._normalize_series_key(series_name))

@@ -1,236 +1,150 @@
-"""Cloudflare-bypass scraper for ripraven.
+"""Scraper for ravenscans.
 
-Cloudflare's managed challenge blocks every plain HTTP client (curl_cffi,
-httpx with browser TLS impersonation, headless playwright). The only thing
-that gets through is a real Chrome under xvfb with a one-time Turnstile click.
-We keep one persistent context alive; cf_clearance carries across calls. On a
-403 we click Turnstile again and retry.
+The site moved from ravenscans.org to ravenscans.net and no longer serves a
+Cloudflare managed challenge, so plain HTTP gets through — pages and the
+`cdnN.ravenscans.org` images alike. Old .org URLs 301 to their .net
+equivalents, so cached pre-move URLs keep resolving as long as redirects are
+followed.
+
+Two page shapes matter:
+
+  series page   https://ravenscans.net/series/<slug>/
+      Chapter list as `<li data-num="12.1"> … <a href=".../chapter-<id>/">`.
+      `data-num` is the chapter number (fractional chapters included); the
+      whole list is on one page, no pagination.
+
+  chapter page  https://ravenscans.net/series/<slug>/chapter-<id>/
+      `chapter-<id>` is an opaque post id, NOT the chapter number — the number
+      only exists on the series page. Page images live in the
+      `ts_reader.run({...})` JSON blob, already in reading order.
 """
 
 import asyncio
+import json
 import logging
 import re
-import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from patchright.async_api import async_playwright, BrowserContext, Page
+import httpx
 
 logger = logging.getLogger(__name__)
 
-CHAPTER_HREF_RE = re.compile(r'href="(https?://ravenscans\.org/[^"]*?-chapter-(\d+(?:-\d+)?)[^"]*?)"')
-IMAGE_URL_RE = re.compile(r'https://cdn\d+\.ravenscans\.org/[^"\s\'>)]+\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
-RAVENSCANS_HOME = 'https://ravenscans.org/'
-# Cloudflare sometimes tarpits an individual image fetch: 200 OK headers
-# arrive but the body never finishes. A healthy image (~300 KB) completes in
-# well under a second, so time out fast and retry instead of burning the
-# default 30s on a dead transfer.
-IMAGE_FETCH_TIMEOUT_MS = 15_000
-IMAGE_FETCH_ATTEMPTS = 3
-# Concurrent image fetches within a chapter. Modest on purpose: running
-# flat-out at ~300 images/min triggers Cloudflare's adaptive rate-limit after
-# ~100 chapters and the profile gets sticky-blocked.
-IMAGE_CONCURRENCY = 3
+RAVENSCANS_HOME = 'https://ravenscans.net/'
+USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+              '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
+
+CHAPTER_ITEM_RE = re.compile(
+    r'<li[^>]*\bdata-num="([^"]+)"[^>]*>.*?<a[^>]+href="([^"]*/chapter-[^"]*?)"',
+    re.S,
+)
+TS_READER_RE = re.compile(r'ts_reader\.run\((\{.*?\})\);', re.S)
+
+REQUEST_TIMEOUT_S = 30
+IMAGE_CONCURRENCY = 4
+IMAGE_ATTEMPTS = 3
+# Small per-image pause. The site is a volunteer scanlation host; there is no
+# rate limit forcing this, it just keeps us from hammering it.
+PER_IMAGE_DELAY_S = 0.1
 
 
-def _natural_sort_key(text: str):
-    return [int(p) if p.isdigit() else p.lower() for p in re.split(r'(\d+)', text)]
+def parse_chapter_list(html: str) -> List[dict]:
+    """Extract `[{'number': '12.1', 'url': ...}, ...]` from a series page."""
+    seen, chapters = set(), []
+    for num, url in CHAPTER_ITEM_RE.findall(html):
+        num = num.strip()
+        if not num or num in seen:
+            continue
+        seen.add(num)
+        chapters.append({'number': num, 'url': url})
+    return chapters
 
 
-class CFScraper:
-    def __init__(self, profile_dir: str | Path = "/tmp/ripraven-profile"):
-        self.profile_dir = Path(profile_dir)
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
-        self._pw = None
-        self._ctx: Optional[BrowserContext] = None
-        self._page: Optional[Page] = None
-        self._lock = asyncio.Lock()
-        # Serializes _solve calls from concurrent image fetches — the shared
-        # page can only navigate one URL at a time.
-        self._solve_lock = asyncio.Lock()
+def parse_chapter_images(html: str) -> List[str]:
+    """Extract the page image URLs from a chapter page's ts_reader payload."""
+    m = TS_READER_RE.search(html)
+    if not m:
+        raise RuntimeError("no ts_reader payload on chapter page")
+    data = json.loads(m.group(1))
+    for source in data.get('sources') or []:
+        images = [u for u in (source.get('images') or []) if u]
+        if images:
+            return images
+    raise RuntimeError("ts_reader payload carries no images")
 
-    async def start(self):
-        if self._ctx is not None:
-            return
-        self._pw = await async_playwright().start()
-        self._ctx = await self._pw.chromium.launch_persistent_context(
-            user_data_dir=str(self.profile_dir),
-            channel='chrome',
-            headless=False,
-            no_viewport=True,
-        )
-        self._page = await self._ctx.new_page()
-        logger.info("🦅 cf-scraper: browser context started")
+
+class RavenScraper:
+    def __init__(self):
+        self._client: Optional[httpx.AsyncClient] = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                # Pre-move URLs are still all over the cache; let them redirect.
+                follow_redirects=True,
+                timeout=REQUEST_TIMEOUT_S,
+                headers={'User-Agent': USER_AGENT, 'Referer': RAVENSCANS_HOME},
+            )
+        return self._client
 
     async def close(self):
-        try:
-            if self._ctx:
-                await self._ctx.close()
-        finally:
-            self._ctx = None
-            self._page = None
-        if self._pw:
-            await self._pw.stop()
-            self._pw = None
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
-    async def reset(self):
-        """Close browser and wipe the persistent profile.
-
-        After ~100 successful chapters Cloudflare started 403-ing every image
-        on this profile, even after Turnstile re-clicks — a 'sticky' bot cookie
-        in the jar. Wiping the profile forces a clean re-solve from scratch
-        and recovers reliably.
-        """
-        await self.close()
-        try:
-            if self.profile_dir.exists():
-                shutil.rmtree(self.profile_dir)
-                self.profile_dir.mkdir(parents=True, exist_ok=True)
-                logger.info("🦅 cf-scraper: wiped profile dir %s", self.profile_dir)
-        except Exception:
-            logger.exception("could not wipe profile dir")
-
-    async def _ensure_started(self):
-        if self._ctx is None:
-            await self.start()
-
-    async def _solve(self, url: str) -> bool:
-        """Navigate to URL and clear any Cloudflare challenge.
-
-        Returns True only if we end up on a real ravenscans page — verified
-        both by title (no longer 'Just a moment...') AND by content (HTML
-        contains either a cdn ravenscans image URL or 'ravenscans.org' link).
-        Without the content check we'd report success when CF served us its
-        'Sorry, you have been blocked' page (different title, no content).
-        """
-        assert self._page
-        try:
-            await self._page.goto(url, timeout=30_000, wait_until='domcontentloaded')
-        except Exception as e:
-            logger.warning("goto failed: %s", e)
-        for i in range(20):
-            await self._page.wait_for_timeout(800)
-            try:
-                title = await self._page.title()
-            except Exception:
-                title = ''
-            if 'Just a moment' not in title and title.strip():
-                # Sanity-check: was this actually a chapter / series page?
-                try:
-                    html = await self._page.content()
-                except Exception:
-                    html = ''
-                if IMAGE_URL_RE.search(html) or 'ravenscans-content' in html or 'wp-content' in html:
-                    return True
-                logger.warning("🦅 cf-scraper: title cleared (%r) but content looks blocked at %s", title, url)
-                return False
-            try:
-                await self._page.mouse.move(100 + i * 5, 200 + i * 3)
-            except Exception:
-                pass
-            if i == 4:
-                try:
-                    fr = self._page.frame_locator('iframe[src*="challenges.cloudflare.com"]')
-                    await fr.locator('input[type=checkbox]').click(timeout=3000)
-                    logger.info("🦅 cf-scraper: clicked Turnstile at %s", url)
-                except Exception:
-                    pass
-        logger.warning("🦅 cf-scraper: could not solve challenge at %s", url)
-        return False
+    async def _get_text(self, url: str) -> str:
+        r = await self._get_client().get(url)
+        r.raise_for_status()
+        return r.text
 
     async def scrape_chapter_list(self, series_url: str) -> List[dict]:
-        await self._ensure_started()
-        async with self._lock:
-            ok = await self._solve(series_url)
-            if not ok:
-                raise RuntimeError(f"CF challenge not solved at {series_url}")
-            html = await self._page.content()
-        seen, chapters = set(), []
-        for m in CHAPTER_HREF_RE.finditer(html):
-            num = m.group(2).replace('-', '.')
-            if num in seen:
-                continue
-            seen.add(num)
-            chapters.append({'number': num, 'url': m.group(1)})
+        chapters = parse_chapter_list(await self._get_text(series_url))
         if not chapters:
             raise RuntimeError(f"no chapters parsed from {series_url}")
         return chapters
 
-    async def _fetch_image(self, url: str, chapter_url: str) -> bytes:
-        """Fetch one image with retries.
-
-        Cloudflare intermittently stalls a transfer (headers arrive, body
-        never completes). Retrying the same URL almost always succeeds, so a
-        stall costs one short timeout instead of failing the whole chapter.
-        """
+    async def _fetch_image(self, url: str) -> bytes:
         last_err: Optional[Exception] = None
-        for attempt in range(1, IMAGE_FETCH_ATTEMPTS + 1):
+        for attempt in range(1, IMAGE_ATTEMPTS + 1):
             try:
-                r = await self._ctx.request.get(
-                    url, headers={'Referer': RAVENSCANS_HOME},
-                    timeout=IMAGE_FETCH_TIMEOUT_MS,
-                )
-                if r.status == 403:
-                    async with self._solve_lock:
-                        await self._solve(chapter_url)
-                    r = await self._ctx.request.get(
-                        url, headers={'Referer': RAVENSCANS_HOME},
-                        timeout=IMAGE_FETCH_TIMEOUT_MS,
-                    )
-                if r.status != 200:
-                    raise RuntimeError(f"HTTP {r.status} fetching {url}")
-                body = await r.body()
-                if not body:
+                r = await self._get_client().get(url)
+                r.raise_for_status()
+                if not r.content:
                     raise RuntimeError(f"empty body for {url}")
-                return body
+                return r.content
             except Exception as e:
                 last_err = e
                 logger.warning("🦅 image fetch %d/%d failed for %s: %s",
-                               attempt, IMAGE_FETCH_ATTEMPTS, url, e)
-                if attempt == IMAGE_FETCH_ATTEMPTS - 1:
-                    # Two stalls in a row on the same image — refresh the CF
-                    # session before the final attempt.
-                    try:
-                        async with self._solve_lock:
-                            await self._solve(chapter_url)
-                    except Exception:
-                        pass
+                               attempt, IMAGE_ATTEMPTS, url, e)
                 await asyncio.sleep(attempt)
-        raise RuntimeError(f"could not fetch {url} after {IMAGE_FETCH_ATTEMPTS} attempts: {last_err}")
+        raise RuntimeError(f"could not fetch {url} after {IMAGE_ATTEMPTS} attempts: {last_err}")
 
     async def fetch_chapter_pages(self, chapter_url: str, save_dir: Path) -> int:
         """Download every page of a chapter into save_dir, skipping files
         already on disk so an interrupted chapter resumes instead of
         restarting. Returns the total page count of the chapter."""
-        await self._ensure_started()
-        async with self._lock:
-            ok = await self._solve(chapter_url)
-            if not ok:
-                raise RuntimeError(f"CF challenge not solved at {chapter_url}")
-            html = await self._page.content()
-            urls = sorted(set(IMAGE_URL_RE.findall(html)),
-                          key=lambda u: _natural_sort_key(u.rsplit('/', 1)[-1]))
-            if not urls:
-                raise RuntimeError(f"no image URLs in {chapter_url}")
+        urls = parse_chapter_images(await self._get_text(chapter_url))
 
-            save_dir.mkdir(parents=True, exist_ok=True)
-            sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
 
-            async def _download(u: str):
-                name = u.rsplit('/', 1)[-1].split('?')[0]
-                out_path = save_dir / name
-                if out_path.exists() and out_path.stat().st_size > 0:
-                    return
-                async with sem:
-                    body = await self._fetch_image(u, chapter_url)
-                    out_path.write_bytes(body)
-                    # Small jitter per fetch keeps the burst rate below
-                    # Cloudflare's adaptive rate-limit.
-                    await asyncio.sleep(0.15)
+        async def _download(idx: int, u: str):
+            # Keep the CDN's own filename (0.webp, 1.webp, …): the reader
+            # natural-sorts filenames, and reusing the remote name is what
+            # lets an interrupted chapter resume instead of redownloading.
+            name = u.rsplit('/', 1)[-1].split('?')[0] or f"{idx:03d}.jpg"
+            out_path = save_dir / name
+            if out_path.exists() and out_path.stat().st_size > 0:
+                return
+            async with sem:
+                out_path.write_bytes(await self._fetch_image(u))
+                await asyncio.sleep(PER_IMAGE_DELAY_S)
 
-            results = await asyncio.gather(*(_download(u) for u in urls),
-                                           return_exceptions=True)
-            errors = [r for r in results if isinstance(r, BaseException)]
-            if errors:
-                raise errors[0]
-            return len(urls)
+        results = await asyncio.gather(
+            *(_download(i, u) for i, u in enumerate(urls)),
+            return_exceptions=True,
+        )
+        errors = [r for r in results if isinstance(r, BaseException)]
+        if errors:
+            raise errors[0]
+        return len(urls)
