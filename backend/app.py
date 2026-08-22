@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from ripraven import create_ripraven_router
+from mtg import create_mtg_router
 from backend.pp import router as pp_router
 from backend.tools.gmail import router as gmail_router
 from backend.tools.whatsapp import router as whatsapp_router
@@ -95,6 +96,9 @@ app.include_router(nightly_router, prefix="/api/nightly")
 # Include general-purpose tool routes
 app.include_router(gmail_router, prefix="/api/tools/gmail")
 app.include_router(whatsapp_router, prefix="/api/tools/whatsapp")
+
+# Two-player table for the Pro Tour Honolulu 2006 replay at /mtg/
+app.include_router(create_mtg_router(), prefix="/api/mtg")
 
 
 def _ripraven_home_response() -> HTMLResponse:

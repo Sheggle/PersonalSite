@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The $16,000 Topdeck — two-player table</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Spectral:ital,wght@0,300;0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="board.css">
+<style>
+/* ── table-specific chrome ─────────────────────────────────────── */
+.status{
+  font-family:var(--f-mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
+  padding:3px 9px 4px; border-radius:99px; border:1px solid var(--rule); color:var(--ink-3);
+}
+.status.live{color:var(--good); border-color:#3f5a34}
+.status.offline{color:var(--bad); border-color:#5c3029}
+.roomtag{
+  font-family:var(--f-mono); font-size:11px; letter-spacing:.22em; color:var(--brass);
+  border:1px solid var(--brass-dim); border-radius:2px; padding:3px 9px 4px;
+}
+.peers{font-family:var(--f-mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3)}
+
+.turnbanner{
+  font-family:var(--f-mono); font-size:11px; letter-spacing:.06em;
+  padding:9px 13px; border-radius:3px; border:1px solid var(--rule);
+  background:var(--panel); color:var(--ink-3); margin-bottom:4px;
+}
+.turnbanner b{color:var(--ink); font-weight:600; letter-spacing:.1em; text-transform:uppercase}
+.turnbanner.mine{border-color:var(--brass); color:var(--ink-2);
+  background:linear-gradient(180deg,rgba(216,169,76,.14),rgba(216,169,76,.04))}
+.turnbanner.theirs{opacity:.75}
+.turnbanner.done{border-color:var(--brass-dim); color:var(--brass)}
+.turnbanner kbd{border:1px solid var(--rule); border-radius:2px; padding:1px 5px; margin-left:4px}
+
+/* your own half of the table gets a hairline so you never misread which side you are */
+.zone.mine .zone-head{border-left:2px solid var(--brass); padding-left:9px; margin-left:-11px}
+.zone:not(.seated) .name{opacity:.55}
+
+/* ── lobby ─────────────────────────────────────────────────────── */
+.lobby{
+  position:fixed; inset:0; z-index:90; display:none; place-items:center; padding:24px;
+  background:rgba(10,8,5,.9);
+}
+.lobby.on{display:grid}
+.lobbybox{
+  width:min(560px,100%); background:var(--panel); border:1px solid var(--rule);
+  border-radius:5px; padding:30px 32px 32px; box-shadow:0 30px 80px rgba(0,0,0,.7);
+}
+.lobbybox .kicker{font-family:var(--f-mono); font-size:10px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--brass); margin-bottom:8px}
+.lobbybox h2{font-family:var(--f-display); font-weight:500; font-size:26px; margin:0 0 6px}
+.lobbybox p{font-size:14.5px; line-height:1.6; color:var(--ink-2); margin:0 0 18px; max-width:52ch}
+.seats{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:6px}
+.seat{
+  text-align:left; cursor:pointer; padding:15px 16px 16px; border-radius:4px;
+  background:var(--panel-2); border:1px solid var(--rule); color:var(--ink);
+  font-family:var(--f-body); transition:border-color .15s, background .15s;
+}
+.seat:hover{border-color:var(--brass); background:#332a1d}
+.seat .sn{display:block; font-family:var(--f-display); font-size:19px; font-weight:600; margin-bottom:2px}
+.seat .sd{display:block; font-family:var(--f-mono); font-size:9.5px; letter-spacing:.11em;
+  text-transform:uppercase; margin-bottom:9px}
+.seat.jones .sd{color:var(--boros)} .seat.ruel .sd{color:var(--orzhov)}
+.seat .sx{display:block; font-size:13px; line-height:1.5; color:var(--ink-2)}
+.seat .pipset{display:flex; gap:3px; margin-top:10px}
+.bigbtn{
+  display:block; width:100%; padding:14px; cursor:pointer; border-radius:4px;
+  background:var(--brass); color:#241a06; border:0; font-family:var(--f-mono);
+  font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
+}
+.bigbtn:hover{background:#e8b95c}
+.share{display:flex; gap:8px; margin-top:18px; padding-top:16px; border-top:1px solid var(--rule-soft)}
+.share input{
+  flex:1; min-width:0; background:var(--table); border:1px solid var(--rule); border-radius:3px;
+  color:var(--ink-2); font-family:var(--f-mono); font-size:11.5px; padding:8px 10px;
+}
+.share button{
+  cursor:pointer; background:transparent; border:1px solid var(--rule); border-radius:3px;
+  color:var(--ink-3); font-family:var(--f-mono); font-size:10px; letter-spacing:.1em;
+  text-transform:uppercase; padding:0 12px;
+}
+.share button:hover{color:var(--brass); border-color:var(--brass-dim)}
+.lobbynote{font-size:12.5px; color:var(--ink-3); margin-top:14px; line-height:1.5}
+#lobbyNew{display:none} #lobbyNew.on{display:block}
+#lobbySeats{display:block} #lobbyNew.on ~ #lobbySeats{display:none}
+@media (max-width:700px){ .seats{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="masthead">
+    <h1>The $16,000 Topdeck</h1>
+    <span class="sub">Two-player table</span>
+    <span class="roomtag" id="roomCode">—</span>
+    <span class="spacer"></span>
+    <span class="peers" id="peers">just you</span>
+    <span class="status" id="status">offline</span>
+    <button class="mast-btn" id="btnDecks">Both decks <kbd>D</kbd></button>
+  </header>
+
+  <main class="stage">
+    <section class="board" id="board" aria-label="Board state">
+
+      <div class="slamwrap" id="slamwrap"></div>
+
+      <div class="pregame" id="pregame">
+        <div class="ev">Pro Tour Honolulu &nbsp;·&nbsp; 5 March 2006 &nbsp;·&nbsp; Semifinal</div>
+        <div class="vs">
+          <div class="pl right">
+            <div class="pn">Craig Jones</div>
+            <div class="pd jones">England &nbsp;·&nbsp; Zoo</div>
+            <div class="pc"><span class="pip R">R</span><span class="pip G">G</span><span class="pip W">W</span></div>
+          </div>
+          <div class="score">2 &mdash; 2</div>
+          <div class="pl">
+            <div class="pn">Olivier Ruel</div>
+            <div class="pd ruel">France &nbsp;·&nbsp; Hand in Hand</div>
+            <div class="pc"><span class="pip W">W</span><span class="pip B">B</span></div>
+          </div>
+        </div>
+        <div class="g5">Game five &mdash; for the final</div>
+      </div>
+
+      <div class="zone" id="topZone">
+        <div class="zone-head">
+          <div class="who"><span class="name" id="topName">—</span><span class="deck" id="topDeck"></span></div>
+          <span class="spacer"></span>
+          <div class="counts"><div class="count"><span class="n" id="topGrave">0</span><span class="lbl">graveyard</span></div></div>
+          <div class="life" id="topLife"><span class="heart">Life</span><span class="n">20</span></div>
+        </div>
+        <div class="row hand" id="topHand"></div>
+        <div class="row lands" id="topLands"></div>
+        <div class="row" id="topPerms"></div>
+      </div>
+
+      <div class="midline">
+        <span class="turnchip" id="turnChip">Before the game</span>
+        <div class="stackzone" id="stackZone"></div>
+        <span class="boardnote" id="boardNote"></span>
+      </div>
+
+      <div class="zone" id="botZone">
+        <div class="row" id="botPerms"></div>
+        <div class="row lands" id="botLands"></div>
+        <div class="row hand" id="botHand"></div>
+        <div class="zone-head">
+          <div class="who"><span class="name" id="botName">—</span><span class="deck" id="botDeck"></span></div>
+          <span class="spacer"></span>
+          <div class="counts"><div class="count"><span class="n" id="botGrave">0</span><span class="lbl">graveyard</span></div></div>
+          <div class="life" id="botLife"><span class="heart">Life</span><span class="n">20</span></div>
+        </div>
+      </div>
+
+    </section>
+
+    <aside style="display:flex;flex-direction:column;min-height:0;background:var(--table-2)">
+      <div style="padding:14px 24px 0"><div class="turnbanner" id="turnBanner">Connecting…</div></div>
+      <div class="analysis" id="analysis" aria-live="polite" style="background:transparent"></div>
+    </aside>
+  </main>
+
+  <footer class="transport">
+    <div class="navbtns">
+      <button class="nav" id="prev" aria-label="Previous step">&#8592;</button>
+      <button class="nav" id="next" aria-label="Next step">&#8594;</button>
+    </div>
+    <div class="ticks" id="ticks"></div>
+    <span class="counter"><b id="cNow">1</b> / <span id="cAll">1</span></span>
+    <span class="hint"><kbd>&#8592;</kbd> <kbd>&#8594;</kbd> on your turn</span>
+  </footer>
+
+  <p class="fanline">
+    Unofficial Fan Content permitted under the Wizards of the Coast Fan Content Policy.
+    Not approved or endorsed by Wizards. Portions of the materials used are property of
+    Wizards of the Coast. &copy;Wizards of the Coast LLC.
+  </p>
+</div>
+
+<div class="cardpop" id="cardpop"></div>
+<div class="gpop" id="gpop"></div>
+
+<div class="lobby" id="lobby">
+  <div class="lobbybox">
+
+    <div id="lobbyNew">
+      <div class="kicker">Pro Tour Honolulu 2006 · semifinal, game five</div>
+      <h2>Re-enact it with someone</h2>
+      <p>You each take a side and play the game out one move at a time. The board, both
+         libraries and every card are the real ones; the page tells whoever is to move what
+         actually happened, and only that player can advance.</p>
+      <button class="bigbtn" onclick="newTable()">Start a table</button>
+      <p class="lobbynote">You'll get a link to send to the other player. Nothing is stored —
+         a table lives only as long as you're both on it.</p>
+    </div>
+
+    <div id="lobbySeats">
+      <div class="kicker">Table <span id="roomCode2"></span></div>
+      <h2>Take a side</h2>
+      <p>Jones is the aggressive deck trying to finish before it runs out of steam. Ruel is
+         the grinding deck trying to survive long enough for its card quality to matter.</p>
+      <div class="seats">
+        <button class="seat jones" onclick="takeSeat('jones')">
+          <span class="sn">Craig Jones</span>
+          <span class="sd">England · Zoo</span>
+          <span class="sx">Cheap creatures and fourteen burn spells. You are on the play.</span>
+          <span class="pipset"><span class="pip R">R</span><span class="pip G">G</span><span class="pip W">W</span></span>
+        </button>
+        <button class="seat ruel" onclick="takeSeat('ruel')">
+          <span class="sn">Olivier Ruel</span>
+          <span class="sd">France · Hand in Hand</span>
+          <span class="sx">Discard, removal and relentless card advantage. You mulligan to six.</span>
+          <span class="pipset"><span class="pip W">W</span><span class="pip B">B</span></span>
+        </button>
+      </div>
+      <div class="share">
+        <input id="shareLink" readonly value="">
+        <button onclick="navigator.clipboard.writeText(shareLink.value).then(()=>this.textContent='copied')">Copy link</button>
+      </div>
+      <p class="lobbynote">Send that link to the other player, then pick your side.</p>
+    </div>
+
+  </div>
+</div>
+
+<div class="scrim" id="scrimDecks">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Decklists">
+    <button class="mast-btn closex" data-close>Close <kbd>Esc</kbd></button>
+    <div class="kicker">Official Top 8 decklists</div>
+    <h3>Sixty cards each, and two completely different ideas</h3>
+    <p>Ravnica-block Standard, March 2006. Both lists below are exactly as submitted.</p>
+    <div class="decks">
+      <section class="jones">
+        <h5>Craig Jones — “Zoo”</h5>
+        <div class="dsub">Red · Green · White — race them down</div>
+        <div class="dlist" id="deckJones"></div>
+      </section>
+      <section class="ruel">
+        <h5>Olivier Ruel — “Hand in Hand”</h5>
+        <div class="dsub">White · Black — grind them out</div>
+        <div class="dlist" id="deckRuel"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+
+<script src="game-data.js"></script>
+<script src="engine.js"></script>
+<script src="popovers.js"></script>
+<script src="reenact.js"></script>
+<script>document.getElementById("btnDecks").onclick = () => document.getElementById("scrimDecks").classList.add("on");</script>
+</body>
+</html>
