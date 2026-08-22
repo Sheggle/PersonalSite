@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<cockatrice_deck version="1">
+    <deckname>Craig Jones - Zoo (PT Honolulu 2006)</deckname>
+    <comments>Pro Tour Honolulu 2006 Top 8 decklist. Unofficial fan content.</comments>
+    <zone name="main">
+        <card number="4" price="0" name="Savannah Lions"/>
+        <card number="4" price="0" name="Isamaru, Hound of Konda"/>
+        <card number="4" price="0" name="Kird Ape"/>
+        <card number="4" price="0" name="Watchwolf"/>
+        <card number="3" price="0" name="Burning-Tree Shaman"/>
+        <card number="3" price="0" name="Kami of Ancient Law"/>
+        <card number="2" price="0" name="Bathe in Light"/>
+        <card number="4" price="0" name="Char"/>
+        <card number="4" price="0" name="Lightning Helix"/>
+        <card number="3" price="0" name="Flames of the Blood Hand"/>
+        <card number="3" price="0" name="Shock"/>
+        <card number="4" price="0" name="Sacred Foundry"/>
+        <card number="4" price="0" name="Battlefield Forge"/>
+        <card number="4" price="0" name="Stomping Ground"/>
+        <card number="4" price="0" name="Temple Garden"/>
+        <card number="2" price="0" name="Forest"/>
+        <card number="1" price="0" name="Eiganjo Castle"/>
+        <card number="1" price="0" name="Plains"/>
+        <card number="1" price="0" name="Karplusan Forest"/>
+        <card number="1" price="0" name="Brushland"/>
+    </zone>
+    <zone name="side">
+        <card number="1" price="0" name="Flames of the Blood Hand"/>
+        <card number="4" price="0" name="Umezawa&#x27;s Jitte"/>
+        <card number="2" price="0" name="Tin Street Hooligan"/>
+        <card number="2" price="0" name="Giant Solifuge"/>
+        <card number="3" price="0" name="Hunted Wumpus"/>
+        <card number="3" price="0" name="Guerrilla Tactics"/>
+    </zone>
+</cockatrice_deck>
