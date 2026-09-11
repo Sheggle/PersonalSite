@@ -21,8 +21,10 @@ import asyncio
 import json
 import logging
 import re
+import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -51,6 +53,17 @@ IMAGE_TIMEOUT_S = 10
 # their combined load on a volunteer scanlation host reasonable.
 IMAGE_CONCURRENCY = 12
 IMAGE_ATTEMPTS = 3
+# How long a CDN host stays written off after a whole chapter failed on it.
+# Individual nodes go down for hours: cdn3 can be returning 522 for every
+# series it holds while cdn1 and cdn2 serve in under a second. Probing it once
+# per chapter costs 33s of timeouts each time, which is the difference between
+# walking a dead run of chapters in seconds and taking all afternoon over it.
+HOST_DOWN_S = 10 * 60
+
+
+class SourceUnavailable(RuntimeError):
+    """Skipped without a request: every page of this chapter sits on a host
+    that just failed a whole chapter."""
 
 
 def describe_exc(e: BaseException) -> str:
@@ -100,6 +113,8 @@ class RavenScraper:
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
         self._image_sem: Optional[asyncio.Semaphore] = None
+        # host -> when it last failed a whole chapter.
+        self._host_down: Dict[str, float] = {}
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -120,6 +135,10 @@ class RavenScraper:
         if self._image_sem is None:
             self._image_sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
         return self._image_sem
+
+    def _hosts_down(self, hosts: set) -> list:
+        cutoff = time.time() - HOST_DOWN_S
+        return sorted(h for h in hosts if self._host_down.get(h, 0) > cutoff)
 
     async def close(self):
         if self._client is not None:
@@ -164,6 +183,11 @@ class RavenScraper:
         restarting. Returns the total page count of the chapter."""
         urls = parse_chapter_images(await self._get_text(chapter_url))
 
+        hosts = {urlparse(u).netloc for u in urls}
+        down = self._hosts_down(hosts)
+        if down and len(down) == len(hosts):
+            raise SourceUnavailable(f"{', '.join(down)} unreachable")
+
         save_dir.mkdir(parents=True, exist_ok=True)
         sem = self._get_image_sem()
 
@@ -201,5 +225,11 @@ class RavenScraper:
             return_exceptions=True,
         )
         if failures:
+            # Only when the whole chapter lives on one host: a single flaky
+            # image is not evidence that the host is gone.
+            if len(hosts) == 1:
+                self._host_down[next(iter(hosts))] = time.time()
             raise failures[0]
+        for h in hosts:
+            self._host_down.pop(h, None)
         return len(urls)

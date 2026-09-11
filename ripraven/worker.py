@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .scraper import RavenScraper, describe_exc
+from .scraper import RavenScraper, SourceUnavailable, describe_exc
 from .pattern_finder import ChapterListCache
 from .series_index import SeriesIndex
 from .tracking import TrackingState
@@ -121,6 +121,7 @@ async def _one_series(scraper: RavenScraper,
 
     attempted = 0
     in_a_row = 0
+    shelved = 0
     for ch in chapter_cache.get_chapters(series_name) or []:
         if attempted >= CHAPTERS_PER_PASS:
             break
@@ -139,11 +140,21 @@ async def _one_series(scraper: RavenScraper,
             page_count = await scraper.fetch_chapter_pages(ch['url'], chapter_dir)
         except asyncio.CancelledError:
             raise
+        except SourceUnavailable as e:
+            # No request was made — the host is already known down — so this
+            # costs nothing and must not spend the failure streak. It is what
+            # lets a pass walk a long run of chapters on a dead node and reach
+            # the ones behind it that a live node still serves.
+            _note_chapter_failure(chapter_dir, describe_exc(e))
+            logger.info("🚧 %s ch %s skipped: %s", series_name, ch_num, describe_exc(e))
+            shelved += 1
+            continue
         except Exception as e:
             reason = describe_exc(e)
             attempts = _note_chapter_failure(chapter_dir, reason)
             logger.warning("🚧 %s ch %s shelved after %d attempt(s): %s",
                            series_name, ch_num, attempts, reason)
+            shelved += 1
             in_a_row += 1
             if in_a_row >= MAX_CONSECUTIVE_CHAPTER_FAILURES:
                 break
@@ -156,7 +167,10 @@ async def _one_series(scraper: RavenScraper,
         in_a_row = 0
         await asyncio.sleep(random.uniform(WORK_SLEEP_MIN_S, WORK_SLEEP_MAX_S))
 
-    return done
+    # Shelving counts as work for pacing. Otherwise a pass that only shelved
+    # looks idle to run_worker, which then sleeps a minute between two-chapter
+    # steps and takes hours to walk past an outage it could clear in seconds.
+    return done + shelved
 
 
 async def _one_cycle(scraper: RavenScraper,
