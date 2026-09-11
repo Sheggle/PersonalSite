@@ -184,15 +184,17 @@ class RavenScraper:
                 return
             if failures:
                 return
-            async with sem:
-                if failures:  # may have waited a long time for the slot
-                    return
-                try:
+            try:
+                async with sem:
+                    if failures:  # may have waited a long time for the slot
+                        return
                     data = await self._fetch_image(u)
-                except Exception as e:
-                    failures.append(e)
-                    raise
-            out_path.write_bytes(data)
+                out_path.write_bytes(data)
+            except Exception as e:
+                # Every failure lands here, a full disk as much as a dead CDN
+                # node: a chapter missing a page must never be marked complete.
+                failures.append(e)
+                raise
 
         await asyncio.gather(
             *(_download(i, u) for i, u in enumerate(urls)),
