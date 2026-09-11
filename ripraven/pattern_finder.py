@@ -3,12 +3,12 @@
 
 Chapter URL shapes, both accepted:
 
-  https://ravenscans.net/series/city-of-sins/chapter-524502/   (current)
-  https://ravenscans.org/city-of-sins-chapter-1/               (pre-move)
+  https://ravenscans.org/city-of-sins-chapter-1/               (current)
+  https://ravenscans.net/series/city-of-sins/chapter-524502/   (older)
 
-The current shape carries an opaque post id where the old one carried the
-chapter number, so `chapter_num` is None for it — the number lives only in the
-series page's chapter list, which the scraper reads.
+The older shape carries an opaque post id where the current one carries the
+chapter number, so `chapter_num` is None for it. Either way the number is only
+authoritative on the series page, which the scraper reads.
 """
 
 import json
@@ -26,15 +26,22 @@ CHAPTER_URL_RE = re.compile(r'^/series/([^/]+)/chapter-[^/]+/?$')
 LEGACY_CHAPTER_URL_RE = re.compile(r'^/([^/]+)-chapter-(\d+(?:-\d+)?)/?$')
 
 
+def series_url_for(series_slug: str) -> str:
+    """Canonical series page. The site has moved domain and path shape before;
+    every other URL for a series redirects here, so store this one and stop
+    paying the redirect on every refresh."""
+    return f"https://ravenscans.org/manga/{series_slug}/"
+
+
 def parse_chapter_url(url: str) -> Optional[dict]:
     """Extract series slug (+ chapter number where the URL carries one).
 
     Returns ``{'series_slug': 'city-of-sins', 'series_name': 'City_Of_Sins',
-    'chapter_num': None, 'series_url': 'https://ravenscans.net/series/city-of-sins/'}``
+    'chapter_num': '1', 'series_url': 'https://ravenscans.org/manga/city-of-sins/'}``
     or None if the URL doesn't look like a chapter.
 
-    Pre-move URLs spell fractional chapters in hyphen form (``chapter-1-1``
-    for 1.1).
+    These URLs spell fractional chapters in hyphen form (``chapter-1-1`` for
+    1.1).
     """
     path = urlparse(url).path
     m = CHAPTER_URL_RE.match(path)
@@ -51,7 +58,7 @@ def parse_chapter_url(url: str) -> Optional[dict]:
         'series_slug': series_slug,
         'series_name': series_slug.replace('-', '_').title().replace(' ', '_'),
         'chapter_num': chapter_num,
-        'series_url': f"https://ravenscans.net/series/{series_slug}/",
+        'series_url': series_url_for(series_slug),
     }
 
 

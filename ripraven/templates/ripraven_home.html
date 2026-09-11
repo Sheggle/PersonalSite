@@ -433,6 +433,16 @@
         }
       }
 
+      // What a tracked row says, and in what colour. A series that is failing
+      // must not look the same as one that is merely queued.
+      function trackedLabel(t) {
+        if (t.error) {
+          return { text: `⚠️ ${t.error_count > 1 ? `failed ${t.error_count}× — ` : ''}${t.error}`, color: '#ff6b6b' };
+        }
+        if (!t.has_chapter_list) return { text: 'waiting for chapter list…', color: '#888' };
+        return { text: `${t.downloaded_chapters} / ${t.total_chapters} chapters`, color: '#888' };
+      }
+
       // Render rows once; subsequent polls just patch the label text in place
       // so we don't flicker the section.
       function renderTrackedRows(pending) {
@@ -442,16 +452,15 @@
           const row = document.createElement('div');
           row.dataset.slug = t.series_slug;
           row.style.cssText = 'display:flex; align-items:center; gap:0.75rem; padding:0.4rem 0; border-bottom:1px solid #222; font-size:0.9rem;';
-          const labelText = t.has_chapter_list
-            ? `${t.downloaded_chapters} / ${t.total_chapters} chapters`
-            : 'waiting for chapter list…';
+          const info = trackedLabel(t);
           const name = document.createElement('span');
           name.style.cssText = 'flex:1; color:#eee;';
           name.textContent = t.series_name.replace(/_/g, ' ');
           const label = document.createElement('span');
           label.className = 'tracked-label';
-          label.style.color = '#888';
-          label.textContent = labelText;
+          label.style.color = info.color;
+          label.style.textAlign = 'right';
+          label.textContent = info.text;
           row.appendChild(name);
           row.appendChild(label);
           list.appendChild(row);
@@ -468,10 +477,11 @@
           if (!t) { row.remove(); return; }
           existing.add(slug);
           const label = row.querySelector('.tracked-label');
-          const text = t.has_chapter_list
-            ? `${t.downloaded_chapters} / ${t.total_chapters} chapters`
-            : 'waiting for chapter list…';
-          if (label && label.textContent !== text) label.textContent = text;
+          const info = trackedLabel(t);
+          if (label && label.textContent !== info.text) {
+            label.textContent = info.text;
+            label.style.color = info.color;
+          }
         });
         // Any new slug that wasn't already rendered → fall back to a full rerender.
         if (pending.some(t => !existing.has(t.series_slug))) renderTrackedRows(pending);
@@ -484,7 +494,7 @@
           if (!r.ok) throw new Error('failed');
           const tracked = await r.json();
           const pending = tracked.filter(t =>
-            !t.has_chapter_list || t.downloaded_chapters < t.total_chapters
+            t.error || !t.has_chapter_list || t.downloaded_chapters < t.total_chapters
           );
           if (!pending.length) {
             section.style.display = 'none';
@@ -500,9 +510,10 @@
         }
       }
 
-      // Poll just the tracking counts. We do NOT rebuild the series grid or
-      // recents row on each tick — that caused full-page DOM flicker every 5s.
-      // A new chapter landing on disk will surface on the next manual reload.
+      // Poll just the tracking counts — fast enough that an import visibly
+      // moves. We do NOT rebuild the series grid or recents row on each tick;
+      // that caused full-page DOM flicker. A new chapter landing on disk will
+      // surface on the next manual reload.
       let pollHandle = null;
       function startTrackingPoll() {
         if (pollHandle) return;
@@ -512,7 +523,7 @@
             clearInterval(pollHandle);
             pollHandle = null;
           }
-        }, 30000);
+        }, 4000);
       }
 
       // Import manga functionality

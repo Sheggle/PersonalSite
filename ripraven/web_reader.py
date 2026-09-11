@@ -155,10 +155,10 @@ class RipRavenAPI:
         """Cache the series' chapter list and return the number of the chapter
         the import URL points at.
 
-        Chapter URLs carry an opaque post id, so the series page is the only
-        place that maps them to chapter numbers. Doing it here also means the
-        worker can start downloading on its next pass instead of spending one
-        first. Best effort — the worker scrapes the list itself either way.
+        The series page is the only authoritative source of chapter numbers,
+        and caching it here means the worker starts downloading on its next
+        pass instead of spending one on the list. Best effort — the worker
+        scrapes the list itself either way.
         """
         from .scraper import RavenScraper
         scraper = self._scraper or RavenScraper()
@@ -276,7 +276,7 @@ class RipRavenAPI:
             if not parsed:
                 raise HTTPException(
                     status_code=400,
-                    detail="URL must look like https://ravenscans.net/series/<series>/chapter-<id>/",
+                    detail="URL must look like https://ravenscans.org/<series>-chapter-<n>/",
                 )
             self.tracking.add(
                 series_slug=parsed['series_slug'],
@@ -284,9 +284,13 @@ class RipRavenAPI:
                 series_url=parsed['series_url'],
                 source_url=req.url,
             )
-            chapter_num = parsed['chapter_num'] or await self._seed_chapter_list(
+            # Always seed: it is one ~0.5s request and it means the series
+            # shows a real chapter count the moment this call returns, instead
+            # of sitting on "waiting for chapter list…" until a worker pass.
+            seeded = await self._seed_chapter_list(
                 parsed['series_name'], parsed['series_url'], req.url,
             )
+            chapter_num = seeded or parsed['chapter_num']
             if chapter_num:
                 # Seed Recently Read with the imported chapter so the user has
                 # a one-click path to it as soon as the worker catches up.

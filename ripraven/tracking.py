@@ -15,10 +15,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from .pattern_finder import series_url_for
+
 logger = logging.getLogger(__name__)
 
 
 CLAIM_TTL_SECONDS = 300
+# A series whose chapter list will not parse (site redesign, series pulled
+# upstream) must not be retried every cycle — that once span for nine days and
+# 92k log lines. Back off exponentially from a minute up to an hour.
+FAILURE_BACKOFF_MIN_S = 60
+FAILURE_BACKOFF_MAX_S = 3600
 
 
 class TrackingState:
@@ -35,15 +42,32 @@ class TrackingState:
         self.path = Path(data_dir) / "tracking.json"
         self._state: dict = self._load()
         self._claims: dict[str, dict] = {}
+        # slug -> {error, count, retry_at}. In memory only, like claims: a
+        # restart is a fair reason to try everything once more.
+        self._failures: dict[str, dict] = {}
 
     def _load(self) -> dict:
-        if self.path.exists():
-            try:
-                with open(self.path) as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning("⚠️ Could not load tracking state: %s", e)
-        return {}
+        if not self.path.exists():
+            return {}
+        try:
+            with open(self.path) as f:
+                state = json.load(f)
+        except Exception as e:
+            logger.warning("⚠️ Could not load tracking state: %s", e)
+            return {}
+        # Entries predate the move back to ravenscans.org and still hold URLs
+        # that only work via redirect. Pin them to the canonical page.
+        changed = False
+        for slug, info in state.items():
+            canonical = series_url_for(slug)
+            if info.get('series_url') != canonical:
+                info['series_url'] = canonical
+                changed = True
+        if changed:
+            self._state = state
+            self._save()
+            logger.info("🦅 tracking: pinned %d series URLs to ravenscans.org", len(state))
+        return state
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +113,27 @@ class TrackingState:
 
     def release(self, token: str):
         self._claims.pop(token, None)
+
+    # ---- failure backoff ---------------------------------------------------
+
+    def note_failure(self, slug: str, error: str) -> tuple[int, int]:
+        """Record a failed pass. Returns (retry delay in seconds, how many
+        times this series has now failed in a row)."""
+        count = self._failures.get(slug, {}).get('count', 0) + 1
+        delay = min(FAILURE_BACKOFF_MIN_S * 2 ** (count - 1), FAILURE_BACKOFF_MAX_S)
+        self._failures[slug] = {
+            'error': error,
+            'count': count,
+            'retry_at': time.time() + delay,
+        }
+        return delay, count
+
+    def note_success(self, slug: str):
+        self._failures.pop(slug, None)
+
+    def in_backoff(self, slug: str) -> bool:
+        f = self._failures.get(slug)
+        return bool(f) and time.time() < f['retry_at']
 
     # ---- queue building ----------------------------------------------------
 
@@ -162,6 +207,7 @@ class TrackingState:
             chapters = chapter_cache.get_chapters(info['series_name']) or []
             total = len(chapters)
             done = sum(1 for ch in chapters if chapter_is_complete(info['series_name'], str(ch['number'])))
+            failure = self._failures.get(slug)
             out.append({
                 'series_slug': slug,
                 'series_name': info['series_name'],
@@ -170,5 +216,9 @@ class TrackingState:
                 'downloaded_chapters': done,
                 'has_chapter_list': total > 0,
                 'added': info.get('added'),
+                # Present only while the series is failing, so the UI can tell
+                # "queued" apart from "stuck".
+                'error': failure['error'] if failure else None,
+                'error_count': failure['count'] if failure else 0,
             })
         return out

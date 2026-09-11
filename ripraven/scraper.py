@@ -1,22 +1,20 @@
 """Scraper for ravenscans.
 
-The site moved from ravenscans.org to ravenscans.net and no longer serves a
-Cloudflare managed challenge, so plain HTTP gets through — pages and the
-`cdnN.ravenscans.org` images alike. Old .org URLs 301 to their .net
-equivalents, so cached pre-move URLs keep resolving as long as redirects are
-followed.
+The site serves from ravenscans.org. Plain HTTP gets through — pages and the
+`cdnN.ravenscans.org` images alike; there is no managed challenge. Older
+`ravenscans.net` URLs still sitting in the caches 301 to their .org
+equivalents, so they keep resolving as long as redirects are followed.
 
 Two page shapes matter:
 
-  series page   https://ravenscans.net/series/<slug>/
-      Chapter list as `<li data-num="12.1"> … <a href=".../chapter-<id>/">`.
-      `data-num` is the chapter number (fractional chapters included); the
-      whole list is on one page, no pagination.
+  series page   https://ravenscans.org/manga/<slug>/
+      Chapter list as `<li data-num="12.1"> … <a href=".../<slug>-chapter-12-1/">`.
+      `data-num` is the chapter number (fractional chapters included) and is
+      the only place it is stated; the whole list is on one page, no pagination.
 
-  chapter page  https://ravenscans.net/series/<slug>/chapter-<id>/
-      `chapter-<id>` is an opaque post id, NOT the chapter number — the number
-      only exists on the series page. Page images live in the
-      `ts_reader.run({...})` JSON blob, already in reading order.
+  chapter page  https://ravenscans.org/<slug>-chapter-96/
+      Page images live in the `ts_reader.run({...})` JSON blob, already in
+      reading order. Mixed extensions within one chapter are normal.
 """
 
 import asyncio
@@ -30,30 +28,41 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-RAVENSCANS_HOME = 'https://ravenscans.net/'
+RAVENSCANS_HOME = 'https://ravenscans.org/'
 USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
 
-CHAPTER_ITEM_RE = re.compile(
-    r'<li[^>]*\bdata-num="([^"]+)"[^>]*>.*?<a[^>]+href="([^"]*/chapter-[^"]*?)"',
-    re.S,
-)
+# Chapter list items. The number lives only in `data-num`; the link shape has
+# changed before (`/chapter-<id>/` vs `-chapter-<n>/`), so match on the word
+# alone and bound the search to the item to avoid running past it.
+CHAPTER_LI_RE = re.compile(r'<li[^>]*\bdata-num="([^"]+)"[^>]*>')
+HREF_RE = re.compile(r'<a[^>]+href="([^"]+)"')
+
 TS_READER_RE = re.compile(r'ts_reader\.run\((\{.*?\})\);', re.S)
 
 REQUEST_TIMEOUT_S = 30
-IMAGE_CONCURRENCY = 4
+# Bounds the total number of in-flight image requests for the whole process,
+# not per chapter — several series download in parallel and this is what keeps
+# their combined load on a volunteer scanlation host reasonable.
+IMAGE_CONCURRENCY = 12
 IMAGE_ATTEMPTS = 3
-# Small per-image pause. The site is a volunteer scanlation host; there is no
-# rate limit forcing this, it just keeps us from hammering it.
-PER_IMAGE_DELAY_S = 0.1
 
 
 def parse_chapter_list(html: str) -> List[dict]:
-    """Extract `[{'number': '12.1', 'url': ...}, ...]` from a series page."""
+    """Extract `[{'number': '12.1', 'url': ...}, ...]` from a series page.
+
+    Each `<li data-num=...>` is read separately, taking the first chapter link
+    inside it, so an item without a link cannot borrow the next item's URL.
+    """
+    items = list(CHAPTER_LI_RE.finditer(html))
     seen, chapters = set(), []
-    for num, url in CHAPTER_ITEM_RE.findall(html):
-        num = num.strip()
+    for i, m in enumerate(items):
+        num = m.group(1).strip()
         if not num or num in seen:
+            continue
+        end = items[i + 1].start() if i + 1 < len(items) else len(html)
+        url = next((h for h in HREF_RE.findall(html[m.end():end]) if 'chapter-' in h), None)
+        if not url:
             continue
         seen.add(num)
         chapters.append({'number': num, 'url': url})
@@ -76,16 +85,27 @@ def parse_chapter_images(html: str) -> List[str]:
 class RavenScraper:
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
+        self._image_sem: Optional[asyncio.Semaphore] = None
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                # Pre-move URLs are still all over the cache; let them redirect.
+                # Stale .net URLs are still all over the cache; let them redirect.
                 follow_redirects=True,
                 timeout=REQUEST_TIMEOUT_S,
                 headers={'User-Agent': USER_AGENT, 'Referer': RAVENSCANS_HOME},
+                limits=httpx.Limits(
+                    max_connections=IMAGE_CONCURRENCY + 4,
+                    max_keepalive_connections=IMAGE_CONCURRENCY + 4,
+                ),
             )
         return self._client
+
+    def _get_image_sem(self) -> asyncio.Semaphore:
+        # Built lazily: it must belong to the loop the worker runs on.
+        if self._image_sem is None:
+            self._image_sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
+        return self._image_sem
 
     async def close(self):
         if self._client is not None:
@@ -126,7 +146,7 @@ class RavenScraper:
         urls = parse_chapter_images(await self._get_text(chapter_url))
 
         save_dir.mkdir(parents=True, exist_ok=True)
-        sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
+        sem = self._get_image_sem()
 
         async def _download(idx: int, u: str):
             # Keep the CDN's own filename (0.webp, 1.webp, …): the reader
@@ -137,8 +157,8 @@ class RavenScraper:
             if out_path.exists() and out_path.stat().st_size > 0:
                 return
             async with sem:
-                out_path.write_bytes(await self._fetch_image(u))
-                await asyncio.sleep(PER_IMAGE_DELAY_S)
+                data = await self._fetch_image(u)
+            out_path.write_bytes(data)
 
         results = await asyncio.gather(
             *(_download(i, u) for i, u in enumerate(urls)),
