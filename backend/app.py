@@ -19,6 +19,20 @@ from backend.tools.whatsapp import router as whatsapp_router
 from backend.houses import router as houses_router
 from backend.nightly import router as nightly_router
 
+# Uvicorn configures only its own loggers and nothing sets up the root one, so
+# everything this app logs below WARNING is swallowed by logging's last-resort
+# handler and never reaches journalctl — which is why the ripraven worker's
+# progress was invisible while its failures were not. Handle our own trees at
+# INFO; the root logger stays untouched because its INFO stream is httpx
+# writing a line for every image the worker fetches.
+_app_handler = logging.StreamHandler()
+_app_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+for _name in ("sheggle", "ripraven"):
+    _logger = logging.getLogger(_name)
+    _logger.setLevel(logging.INFO)
+    _logger.addHandler(_app_handler)
+    _logger.propagate = False
+
 log = logging.getLogger("sheggle.email_poll")
 
 POLL_INTERVAL = int(os.environ.get("EMAIL_POLL_INTERVAL", "60"))

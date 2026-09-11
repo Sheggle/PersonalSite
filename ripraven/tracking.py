@@ -200,20 +200,33 @@ class TrackingState:
 
         return items
 
-    def status(self, chapter_cache, chapter_is_complete: Callable[[str, str], bool]) -> List[dict]:
+    def status(self, chapter_cache,
+               chapter_is_complete: Callable[[str, str], bool],
+               chapter_is_shelved: Optional[Callable[[str, str], bool]] = None) -> List[dict]:
         """Per-series progress snapshot for the home page UI."""
         out = []
         for slug, info in self._state.items():
-            chapters = chapter_cache.get_chapters(info['series_name']) or []
+            name = info['series_name']
+            chapters = chapter_cache.get_chapters(name) or []
             total = len(chapters)
-            done = sum(1 for ch in chapters if chapter_is_complete(info['series_name'], str(ch['number'])))
+            done = sum(1 for ch in chapters if chapter_is_complete(name, str(ch['number'])))
+            # Chapters the worker has given up on for now. Counted separately
+            # because a series missing only these is stalled, not queued, and
+            # the series-level error clears as soon as they are all shelved.
+            shelved = sum(
+                1 for ch in chapters
+                if chapter_is_shelved
+                and not chapter_is_complete(name, str(ch['number']))
+                and chapter_is_shelved(name, str(ch['number']))
+            )
             failure = self._failures.get(slug)
             out.append({
                 'series_slug': slug,
-                'series_name': info['series_name'],
+                'series_name': name,
                 'series_url': info['series_url'],
                 'total_chapters': total,
                 'downloaded_chapters': done,
+                'shelved_chapters': shelved,
                 'has_chapter_list': total > 0,
                 'added': info.get('added'),
                 # Present only while the series is failing, so the UI can tell

@@ -53,6 +53,15 @@ IMAGE_CONCURRENCY = 12
 IMAGE_ATTEMPTS = 3
 
 
+def describe_exc(e: BaseException) -> str:
+    """`str(e)` alone is useless for the failures that actually happen here:
+    httpx timeout exceptions carry an empty message, so an error built from
+    them reads "could not fetch <url> after 3 attempts:" and names nothing.
+    Always lead with the class."""
+    text = str(e).strip()
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
 def parse_chapter_list(html: str) -> List[dict]:
     """Extract `[{'number': '12.1', 'url': ...}, ...]` from a series page.
 
@@ -140,9 +149,14 @@ class RavenScraper:
             except Exception as e:
                 last_err = e
                 logger.warning("🦅 image fetch %d/%d failed for %s: %s",
-                               attempt, IMAGE_ATTEMPTS, url, e)
-                await asyncio.sleep(attempt)
-        raise RuntimeError(f"could not fetch {url} after {IMAGE_ATTEMPTS} attempts: {last_err}")
+                               attempt, IMAGE_ATTEMPTS, url, describe_exc(e))
+                if attempt < IMAGE_ATTEMPTS:
+                    await asyncio.sleep(attempt)
+        # Cause first: this string is what the home page shows, and "could not
+        # fetch <url> after 3 attempts:" told the reader nothing about why.
+        raise RuntimeError(
+            f"{describe_exc(last_err)} after {IMAGE_ATTEMPTS} attempts on {url}"
+        )
 
     async def fetch_chapter_pages(self, chapter_url: str, save_dir: Path) -> int:
         """Download every page of a chapter into save_dir, skipping files
@@ -153,6 +167,13 @@ class RavenScraper:
         save_dir.mkdir(parents=True, exist_ok=True)
         sem = self._get_image_sem()
 
+        # The chapter is lost the moment one page is unfetchable, and when a
+        # CDN node is down every page of the chapter is unfetchable together.
+        # Without this flag the other 150 pages each still burn three attempts
+        # against a dead host while holding an IMAGE_CONCURRENCY slot, so one
+        # broken chapter starves every other series for minutes.
+        failures: List[BaseException] = []
+
         async def _download(idx: int, u: str):
             # Keep the CDN's own filename (0.webp, 1.webp, …): the reader
             # natural-sorts filenames, and reusing the remote name is what
@@ -161,15 +182,22 @@ class RavenScraper:
             out_path = save_dir / name
             if out_path.exists() and out_path.stat().st_size > 0:
                 return
+            if failures:
+                return
             async with sem:
-                data = await self._fetch_image(u)
+                if failures:  # may have waited a long time for the slot
+                    return
+                try:
+                    data = await self._fetch_image(u)
+                except Exception as e:
+                    failures.append(e)
+                    raise
             out_path.write_bytes(data)
 
-        results = await asyncio.gather(
+        await asyncio.gather(
             *(_download(i, u) for i, u in enumerate(urls)),
             return_exceptions=True,
         )
-        errors = [r for r in results if isinstance(r, BaseException)]
-        if errors:
-            raise errors[0]
+        if failures:
+            raise failures[0]
         return len(urls)

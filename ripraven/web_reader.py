@@ -199,6 +199,11 @@ class RipRavenAPI:
     def _chapter_is_complete(self, series_name: str, chapter_num: str) -> bool:
         return (self._chapter_dir(series_name, chapter_num) / COMPLETION_MARKER).exists()
 
+    def _chapter_is_shelved(self, series_name: str, chapter_num: str) -> bool:
+        """A chapter the worker failed to download and has parked for now."""
+        from .worker import read_chapter_failure
+        return bool(read_chapter_failure(self._chapter_dir(series_name, chapter_num)))
+
     def _chapter_status(self, series_name: str, chapter_num: str) -> dict:
         d = self._chapter_dir(series_name, chapter_num)
         if not d.exists():
@@ -309,7 +314,9 @@ class RipRavenAPI:
 
         @self.router.get("/tracked")
         async def get_tracked():
-            return self.tracking.status(self.chapter_cache, self._chapter_is_complete)
+            return self.tracking.status(
+                self.chapter_cache, self._chapter_is_complete, self._chapter_is_shelved,
+            )
 
         @self.router.delete("/tracked/{series_slug}")
         async def stop_tracking(series_slug: str):
