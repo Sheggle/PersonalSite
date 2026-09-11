@@ -8,8 +8,9 @@ source stays bounded by the scraper's process-wide image semaphore.
 
 A chapter whose pages will not download is shelved on disk and the pass moves
 on to the chapters behind it, so one dead CDN node costs a chapter rather than
-the series. A series that achieves nothing at all is put in backoff by
-TrackingState, and its error surfaces through /api/ripraven/tracked.
+the series, and the home page counts it rather than reddening over it. A series
+that breaks outright is put in backoff by TrackingState, and its error surfaces
+through /api/ripraven/tracked.
 """
 
 import asyncio
@@ -20,7 +21,7 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable
 
 from .scraper import RavenScraper, describe_exc
 from .pattern_finder import ChapterListCache
@@ -104,8 +105,10 @@ async def _one_series(scraper: RavenScraper,
     of work items completed.
 
     A chapter that will not download is shelved and the pass moves on to the
-    next one; only a pass that achieves nothing at all is reported as a series
-    failure."""
+    next one. That is not a series failure — the source being unable to serve a
+    chapter is a fact about the chapter, reported as the shelved count on the
+    home page. Only something that breaks the whole series, a chapter list that
+    will not parse, still raises."""
     series_name = info['series_name']
     done = 0
 
@@ -117,9 +120,7 @@ async def _one_series(scraper: RavenScraper,
         done += 1
 
     attempted = 0
-    downloaded = 0
     in_a_row = 0
-    stuck: List[str] = []
     for ch in chapter_cache.get_chapters(series_name) or []:
         if attempted >= CHAPTERS_PER_PASS:
             break
@@ -143,7 +144,6 @@ async def _one_series(scraper: RavenScraper,
             attempts = _note_chapter_failure(chapter_dir, reason)
             logger.warning("🚧 %s ch %s shelved after %d attempt(s): %s",
                            series_name, ch_num, attempts, reason)
-            stuck.append(f"ch {ch_num} — {reason}")
             in_a_row += 1
             if in_a_row >= MAX_CONSECUTIVE_CHAPTER_FAILURES:
                 break
@@ -153,15 +153,8 @@ async def _one_series(scraper: RavenScraper,
         series_index.update_chapter(series_name, f"chapter_{ch_num}", chapter_dir)
         logger.info("✅ %s ch %s: %d pages on disk", series_name, ch_num, page_count)
         done += 1
-        downloaded += 1
         in_a_row = 0
         await asyncio.sleep(random.uniform(WORK_SLEEP_MIN_S, WORK_SLEEP_MAX_S))
-
-    # Nothing downloaded and something refused to: the series is stuck, and the
-    # home page has to say so rather than show it as quietly queued.
-    if stuck and not downloaded:
-        more = f" (+{len(stuck) - 1} more)" if len(stuck) > 1 else ""
-        raise RuntimeError(stuck[0] + more)
 
     return done
 
