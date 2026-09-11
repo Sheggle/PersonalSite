@@ -41,6 +41,11 @@ HREF_RE = re.compile(r'<a[^>]+href="([^"]+)"')
 TS_READER_RE = re.compile(r'ts_reader\.run\((\{.*?\})\);', re.S)
 
 REQUEST_TIMEOUT_S = 30
+# Images get a tighter deadline than pages. A CDN node whose origin is down
+# answers 522 only after ~20s, and because a request holds an IMAGE_CONCURRENCY
+# slot while it waits, a handful of dead images can stall every series at once.
+# A page image that has not started arriving in 10s is not coming.
+IMAGE_TIMEOUT_S = 10
 # Bounds the total number of in-flight image requests for the whole process,
 # not per chapter — several series download in parallel and this is what keeps
 # their combined load on a volunteer scanlation host reasonable.
@@ -127,7 +132,7 @@ class RavenScraper:
         last_err: Optional[Exception] = None
         for attempt in range(1, IMAGE_ATTEMPTS + 1):
             try:
-                r = await self._get_client().get(url)
+                r = await self._get_client().get(url, timeout=IMAGE_TIMEOUT_S)
                 r.raise_for_status()
                 if not r.content:
                     raise RuntimeError(f"empty body for {url}")
