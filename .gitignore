@@ -63,4 +63,7 @@ data/ripraven/chapter_cache.json
 *.log
 
 # UV lock file (optional - remove this line if you want to commit the lock file)
-uv.lockfrontend/mtg/table/
+uv.lock
+
+# Cockatrice table page, generated
+frontend/mtg/table/
