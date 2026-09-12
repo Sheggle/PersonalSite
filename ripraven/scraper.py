@@ -66,6 +66,14 @@ class SourceUnavailable(RuntimeError):
     that just failed a whole chapter."""
 
 
+class ImageFetchError(RuntimeError):
+    """An image failed; only connection failures and 5xx suggest a host outage."""
+
+    def __init__(self, message: str, *, host_unavailable: bool):
+        super().__init__(message)
+        self.host_unavailable = host_unavailable
+
+
 def describe_exc(e: BaseException) -> str:
     """`str(e)` alone is useless for the failures that actually happen here:
     httpx timeout exceptions carry an empty message, so an error built from
@@ -173,9 +181,17 @@ class RavenScraper:
                     await asyncio.sleep(attempt)
         # Cause first: this string is what the home page shows, and "could not
         # fetch <url> after 3 attempts:" told the reader nothing about why.
-        raise RuntimeError(
-            f"{describe_exc(last_err)} after {IMAGE_ATTEMPTS} attempts on {url}"
+        host_unavailable = (
+            isinstance(last_err, (httpx.NetworkError, httpx.TimeoutException))
+            and not isinstance(last_err, httpx.PoolTimeout)
+        ) or (
+            isinstance(last_err, httpx.HTTPStatusError)
+            and last_err.response.status_code >= 500
         )
+        raise ImageFetchError(
+            f"{describe_exc(last_err)} after {IMAGE_ATTEMPTS} attempts on {url}",
+            host_unavailable=host_unavailable,
+        ) from last_err
 
     async def fetch_chapter_pages(self, chapter_url: str, save_dir: Path) -> int:
         """Download every page of a chapter into save_dir, skipping files
@@ -197,8 +213,10 @@ class RavenScraper:
         # against a dead host while holding an IMAGE_CONCURRENCY slot, so one
         # broken chapter starves every other series for minutes.
         failures: List[BaseException] = []
+        fetched = 0
 
         async def _download(idx: int, u: str):
+            nonlocal fetched
             # Keep the CDN's own filename (0.webp, 1.webp, …): the reader
             # natural-sorts filenames, and reusing the remote name is what
             # lets an interrupted chapter resume instead of redownloading.
@@ -213,7 +231,15 @@ class RavenScraper:
                     if failures:  # may have waited a long time for the slot
                         return
                     data = await self._fetch_image(u)
-                out_path.write_bytes(data)
+                    fetched += 1
+                # A failed write must not leave a nonempty partial page that
+                # the next pass mistakes for a successfully downloaded image.
+                temporary = out_path.with_name(out_path.name + '.part')
+                try:
+                    temporary.write_bytes(data)
+                    temporary.replace(out_path)
+                finally:
+                    temporary.unlink(missing_ok=True)
             except Exception as e:
                 # Every failure lands here, a full disk as much as a dead CDN
                 # node: a chapter missing a page must never be marked complete.
@@ -225,10 +251,16 @@ class RavenScraper:
             return_exceptions=True,
         )
         if failures:
-            # Only when the whole chapter lives on one host: a single flaky
-            # image is not evidence that the host is gone.
-            if len(hosts) == 1:
+            # A 404 or a local write error says nothing about host health.
+            # Even a timeout is not a host outage if other pages arrived.
+            if len(hosts) == 1 and not fetched and all(
+                isinstance(e, ImageFetchError) and e.host_unavailable
+                for e in failures
+            ):
                 self._host_down[next(iter(hosts))] = time.time()
+            for error in failures:
+                if isinstance(error, OSError):
+                    raise error
             raise failures[0]
         for h in hosts:
             self._host_down.pop(h, None)

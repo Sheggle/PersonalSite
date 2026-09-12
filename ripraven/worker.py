@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .scraper import RavenScraper, SourceUnavailable, describe_exc
+from .scraper import HOST_DOWN_S, RavenScraper, SourceUnavailable, describe_exc
 from .pattern_finder import ChapterListCache
 from .series_index import SeriesIndex
 from .tracking import TrackingState
@@ -80,6 +80,10 @@ def chapter_is_shelved(chapter_dir: Path) -> bool:
         return False
     delay = min(CHAPTER_RETRY_MIN_S * 2 ** max(f.get('attempts', 1) - 1, 0),
                 CHAPTER_RETRY_MAX_S)
+    if f.get('error', '').startswith('SourceUnavailable:'):
+        # These chapters were never attempted. Revisit when the host circuit
+        # expires, rather than turning skipped requests into a day-long delay.
+        delay = HOST_DOWN_S
     return time.time() - f.get('at', 0) < delay
 
 
@@ -139,6 +143,10 @@ async def _one_series(scraper: RavenScraper,
         try:
             page_count = await scraper.fetch_chapter_pages(ch['url'], chapter_dir)
         except asyncio.CancelledError:
+            raise
+        except OSError:
+            # Local storage failures need the series error/backoff path;
+            # shelving them would misreport them as unavailable source pages.
             raise
         except SourceUnavailable as e:
             # No request was made — the host is already known down — so this

@@ -441,10 +441,9 @@
         }
         if (!t.has_chapter_list) return { text: 'waiting for chapter list…', color: '#888' };
         const progress = `${t.downloaded_chapters} / ${t.total_chapters} chapters`;
-        // Chapters the worker gave up on. Said out loud, because otherwise a
-        // series that will never finish looks exactly like one still working.
+        // Failed downloads remain queued for automatic retry.
         if (t.shelved_chapters) {
-          return { text: `${progress} — ${t.shelved_chapters} unavailable`, color: '#e0a341' };
+          return { text: `${progress} — ${t.shelved_chapters} downloads failed; retrying automatically`, color: '#e0a341' };
         }
         return { text: progress, color: '#888' };
       }
