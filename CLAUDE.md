@@ -33,7 +33,7 @@ States: `new → sent_to_gf → approved → booked` (reject from any)
 ## Deployment (sheggle.com)
 - **Server path**: `/srv/personalsite/`
 - **Service**: `sheggle.service` (systemd, runs `uv run uvicorn backend.app:app --host 127.0.0.1 --port 8000`)
-- **Deploy flow**: `git push origin main` → `ssh deploy@sheggle.com "cd /srv/personalsite && git pull origin main"` → `sudo systemctl restart sheggle.service`
+- **Deploy flow**: `git push origin main` is enough — GitHub Actions SSHes in and runs `/usr/local/bin/update_sheggle` (fetch, `reset --hard origin/main`, `uv sync`, restart). Don't also pull/restart by hand; that restarts the service twice.
 - **Nginx**: proxies `/ripraven` and `/api/` to port 8000
 
 ## Key Files
