@@ -15,6 +15,7 @@ dependencies = [
     "google-api-python-client",
     "google-auth-oauthlib",
     "pyjwt[crypto]",
+    "patchright>=1.64.3",
 ]
 
 [tool.uv]

@@ -1,9 +1,10 @@
 """Scraper for ravenscans.
 
-The site serves from ravenscans.org. Plain HTTP gets through — pages and the
-`cdnN.ravenscans.org` images alike; there is no managed challenge. Older
-`ravenscans.net` URLs still sitting in the caches 301 to their .org
-equivalents, so they keep resolving as long as redirects are followed.
+The site serves from ravenscans.org behind a Cloudflare managed challenge.
+Patchright clears it in headed Chrome under Xvfb, then the clearance cookie and
+matching user agent go back to httpx for normal page and image requests. Older
+`ravenscans.net` URLs still sitting in the caches 301 to their .org equivalents,
+so they keep resolving as long as redirects are followed.
 
 Two page shapes matter:
 
@@ -27,6 +28,8 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
+
+from .cloudflare import fetch_with_clearance
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +120,18 @@ def parse_chapter_images(html: str) -> List[str]:
     raise RuntimeError("ts_reader payload carries no images")
 
 
+def _is_cloudflare_challenge(response: httpx.Response) -> bool:
+    return response.status_code in (403, 503) and (
+        response.headers.get('cf-mitigated') == 'challenge'
+        or '<title>Just a moment' in response.text[:4096]
+    )
+
+
 class RavenScraper:
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
         self._image_sem: Optional[asyncio.Semaphore] = None
+        self._challenge_lock: Optional[asyncio.Lock] = None
         # host -> when it last failed a whole chapter.
         self._host_down: Dict[str, float] = {}
 
@@ -144,6 +155,11 @@ class RavenScraper:
             self._image_sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
         return self._image_sem
 
+    def _get_challenge_lock(self) -> asyncio.Lock:
+        if self._challenge_lock is None:
+            self._challenge_lock = asyncio.Lock()
+        return self._challenge_lock
+
     def _hosts_down(self, hosts: set) -> list:
         cutoff = time.time() - HOST_DOWN_S
         return sorted(h for h in hosts if self._host_down.get(h, 0) > cutoff)
@@ -154,9 +170,31 @@ class RavenScraper:
             self._client = None
 
     async def _get_text(self, url: str) -> str:
-        r = await self._get_client().get(url)
-        r.raise_for_status()
-        return r.text
+        response = await self._get_client().get(url)
+        if not _is_cloudflare_challenge(response):
+            response.raise_for_status()
+            return response.text
+
+        # Only one Chrome instance may clear a challenge. Its cookie is shared
+        # by every series, so everyone else retries with the new session first.
+        async with self._get_challenge_lock():
+            response = await self._get_client().get(url)
+            if not _is_cloudflare_challenge(response):
+                response.raise_for_status()
+                return response.text
+            logger.info("🦅 clearing Cloudflare challenge for %s", url)
+            html, user_agent, cookies = await fetch_with_clearance(
+                url, navigation_timeout_s=REQUEST_TIMEOUT_S,
+            )
+            client = self._get_client()
+            # Clearance is bound to the browser's user agent as well as its IP.
+            client.headers['User-Agent'] = user_agent
+            for cookie in cookies:
+                client.cookies.set(
+                    cookie['name'], cookie['value'],
+                    domain=cookie['domain'], path=cookie['path'],
+                )
+            return html
 
     async def scrape_chapter_list(self, series_url: str) -> List[dict]:
         chapters = parse_chapter_list(await self._get_text(series_url))
