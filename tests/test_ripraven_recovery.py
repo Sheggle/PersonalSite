@@ -29,7 +29,7 @@ class DownloadRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.scraper._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     async def fetch(self):
-        with patch('ripraven.scraper.IMAGE_ATTEMPTS', 1):
+        with patch('ripraven.sources.IMAGE_ATTEMPTS', 1):
             return await self.scraper.fetch_chapter_pages('https://example/chapter-1/', self.directory)
 
     async def test_outage_skips_host_then_recovers(self):

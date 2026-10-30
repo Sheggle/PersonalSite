@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from .pattern_finder import ChapterListCache, parse_chapter_url
 from .series_index import SeriesIndex
+from .sources import PARTIAL_SOURCE_MARKER, clear_partial_images
 from .tracking import TrackingState
 
 logger = logging.getLogger(__name__)
@@ -127,8 +128,9 @@ class RipRavenAPI:
         if self._worker_task is not None and not self._worker_task.done():
             return
         from .scraper import RavenScraper
+        from .sources import AsuraScraper, MultiSourceScraper
         from .worker import run_worker
-        self._scraper = RavenScraper()
+        self._scraper = MultiSourceScraper(RavenScraper(), [AsuraScraper()])
         self._worker_task = asyncio.create_task(run_worker(
             self._scraper,
             self.tracking,
@@ -372,6 +374,12 @@ class RipRavenAPI:
             series_name = tracked['series_name']
             chapter_dir = self._chapter_dir(series_name, chapter_num)
             chapter_dir.mkdir(parents=True, exist_ok=True)
+            # The userscript supplies a whole Raven chapter. Discard any
+            # partial fallback pages rather than mixing two scanlations. An
+            # interrupted re-upload must no longer look complete.
+            (chapter_dir / COMPLETION_MARKER).unlink(missing_ok=True)
+            clear_partial_images(chapter_dir)
+            (chapter_dir / PARTIAL_SOURCE_MARKER).write_text('ravenscans')
 
             saved = 0
             for idx, up in enumerate(pages):
@@ -387,7 +395,12 @@ class RipRavenAPI:
                 out_path.write_bytes(data)
                 saved += 1
 
-            (chapter_dir / COMPLETION_MARKER).write_text(datetime.now().isoformat())
+            (chapter_dir / COMPLETION_MARKER).write_text(json.dumps({
+                'completed_at': datetime.now().isoformat(),
+                'source': 'ravenscans',
+                'via': 'userscript',
+            }))
+            (chapter_dir / PARTIAL_SOURCE_MARKER).unlink(missing_ok=True)
             self.series_index.update_chapter(
                 series_name, f"chapter_{chapter_num}", chapter_dir,
             )

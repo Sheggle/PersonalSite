@@ -1,4 +1,4 @@
-"""Background worker: drive RavenScraper against the TrackingState.
+"""Background worker: drive MultiSourceScraper against the TrackingState.
 
 Each pass walks every tracked series, refreshes any chapter list that has gone
 stale and downloads the oldest missing chapters. A few series progress at once
@@ -23,7 +23,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .scraper import HOST_DOWN_S, RavenScraper, SourceUnavailable, describe_exc
+from .scraper import HOST_DOWN_S, SourceUnavailable, describe_exc
+from .sources import PARTIAL_SOURCE_MARKER, MultiSourceScraper
 from .pattern_finder import ChapterListCache
 from .series_index import SeriesIndex
 from .tracking import TrackingState
@@ -87,18 +88,23 @@ def chapter_is_shelved(chapter_dir: Path) -> bool:
     return time.time() - f.get('at', 0) < delay
 
 
-def _note_chapter_failure(chapter_dir: Path, error: str) -> int:
+def _note_chapter_failure(chapter_dir: Path, error: str, *, fallback: bool = False) -> int:
     attempts = read_chapter_failure(chapter_dir).get('attempts', 0) + 1
     chapter_dir.mkdir(parents=True, exist_ok=True)
-    (chapter_dir / FAILURE_MARKER).write_text(json.dumps({
+    record = {
         'attempts': attempts,
         'at': time.time(),
         'error': error,
-    }))
+    }
+    if fallback:
+        # Old Raven-only failures are allowed one immediate fallback pass. Once
+        # every source has failed, the normal chapter retry delay applies.
+        record['fallback'] = True
+    (chapter_dir / FAILURE_MARKER).write_text(json.dumps(record))
     return attempts
 
 
-async def _one_series(scraper: RavenScraper,
+async def _one_series(scraper: MultiSourceScraper,
                       info: dict,
                       chapter_cache: ChapterListCache,
                       downloads_dir: Path,
@@ -133,7 +139,8 @@ async def _one_series(scraper: RavenScraper,
         if is_complete(series_name, ch_num):
             continue
         chapter_dir = downloads_dir / series_name / f"chapter_{ch_num}"
-        if chapter_is_shelved(chapter_dir):
+        if (chapter_is_shelved(chapter_dir)
+                and read_chapter_failure(chapter_dir).get('fallback')):
             continue
         logger.info("📥 fetching %s ch %s", series_name, ch_num)
         # A failed chapter still spends one of the pass's slots, so a series
@@ -141,7 +148,7 @@ async def _one_series(scraper: RavenScraper,
         # hundreds of chapters in a single pass.
         attempted += 1
         try:
-            page_count = await scraper.fetch_chapter_pages(ch['url'], chapter_dir)
+            downloaded = await scraper.fetch_chapter_pages(ch, info, chapter_dir)
         except asyncio.CancelledError:
             raise
         except OSError:
@@ -153,13 +160,13 @@ async def _one_series(scraper: RavenScraper,
             # costs nothing and must not spend the failure streak. It is what
             # lets a pass walk a long run of chapters on a dead node and reach
             # the ones behind it that a live node still serves.
-            _note_chapter_failure(chapter_dir, describe_exc(e))
+            _note_chapter_failure(chapter_dir, describe_exc(e), fallback=True)
             logger.info("🚧 %s ch %s skipped: %s", series_name, ch_num, describe_exc(e))
             shelved += 1
             continue
         except Exception as e:
             reason = describe_exc(e)
-            attempts = _note_chapter_failure(chapter_dir, reason)
+            attempts = _note_chapter_failure(chapter_dir, reason, fallback=True)
             logger.warning("🚧 %s ch %s shelved after %d attempt(s): %s",
                            series_name, ch_num, attempts, reason)
             shelved += 1
@@ -167,10 +174,18 @@ async def _one_series(scraper: RavenScraper,
             if in_a_row >= MAX_CONSECUTIVE_CHAPTER_FAILURES:
                 break
             continue
-        (chapter_dir / "completed").write_text(datetime.now().isoformat())
+        (chapter_dir / "completed").write_text(json.dumps({
+            'completed_at': datetime.now().isoformat(),
+            'source': downloaded.source,
+            'source_url': downloaded.url,
+        }))
+        # Retain the partial source until completion is durable. If the write
+        # above fails, the next attempt still knows which scanlation is on disk.
+        (chapter_dir / PARTIAL_SOURCE_MARKER).unlink(missing_ok=True)
         (chapter_dir / FAILURE_MARKER).unlink(missing_ok=True)
         series_index.update_chapter(series_name, f"chapter_{ch_num}", chapter_dir)
-        logger.info("✅ %s ch %s: %d pages on disk", series_name, ch_num, page_count)
+        logger.info("✅ %s ch %s: %d pages from %s", series_name, ch_num,
+                    downloaded.page_count, downloaded.source)
         done += 1
         in_a_row = 0
         await asyncio.sleep(random.uniform(WORK_SLEEP_MIN_S, WORK_SLEEP_MAX_S))
@@ -181,7 +196,7 @@ async def _one_series(scraper: RavenScraper,
     return done + shelved
 
 
-async def _one_cycle(scraper: RavenScraper,
+async def _one_cycle(scraper: MultiSourceScraper,
                      tracking: TrackingState,
                      chapter_cache: ChapterListCache,
                      downloads_dir: Path,
@@ -228,7 +243,7 @@ def _free_mb(path: Path) -> int:
         return 1 << 30  # if we can't tell, don't block
 
 
-async def run_worker(scraper: RavenScraper,
+async def run_worker(scraper: MultiSourceScraper,
                      tracking: TrackingState,
                      chapter_cache: ChapterListCache,
                      downloads_dir: Path,

@@ -32,7 +32,11 @@ class TrackingState:
     """Persisted set of tracked series + in-memory claim leases.
 
     File schema (`tracking.json`):
-        {slug: {series_name, series_slug, series_url, source_url, added}, ...}
+        {slug: {series_name, series_slug, series_url, source_url, added,
+                source_urls: {asura: "https://asurascans.com/comics/..."}}, ...}
+
+    `source_urls` is optional and normally absent: fallback sources use exact
+    title/alias search. Set it when a title is renamed or a search is ambiguous.
 
     Claims live only in memory; a process restart re-opens every chapter for
     work, which is fine — at worst, two tabs duplicate one chapter before TTL.
