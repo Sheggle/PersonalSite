@@ -17,7 +17,6 @@ from typing import List, Optional
 
 import httpx
 
-from .cloudflare import fetch_with_clearance
 from .sources import (  # re-exported for the worker and existing callers
     HOST_DOWN_S,
     IMAGE_ATTEMPTS,
@@ -69,50 +68,9 @@ def parse_chapter_images(html: str) -> List[str]:
     raise RuntimeError("ts_reader payload carries no images")
 
 
-def _is_cloudflare_challenge(response: httpx.Response) -> bool:
-    return response.status_code in (403, 503) and (
-        response.headers.get('cf-mitigated') == 'challenge'
-        or '<title>Just a moment' in response.text[:4096]
-    )
-
-
 class RavenScraper(ChapterSource):
     name = 'ravenscans'
     home = RAVENSCANS_HOME
-
-    def __init__(self):
-        super().__init__()
-        self._challenge_lock: Optional[asyncio.Lock] = None
-
-    def _get_challenge_lock(self) -> asyncio.Lock:
-        if self._challenge_lock is None:
-            self._challenge_lock = asyncio.Lock()
-        return self._challenge_lock
-
-    async def _get_text(self, url: str) -> str:
-        response = await self._get_client().get(url)
-        if not _is_cloudflare_challenge(response):
-            response.raise_for_status()
-            return response.text
-
-        # One Chrome instance clears a challenge shared by every series.
-        async with self._get_challenge_lock():
-            response = await self._get_client().get(url)
-            if not _is_cloudflare_challenge(response):
-                response.raise_for_status()
-                return response.text
-            logger.info("🦅 clearing Cloudflare challenge for %s", url)
-            html, user_agent, cookies = await fetch_with_clearance(
-                url, navigation_timeout_s=REQUEST_TIMEOUT_S,
-            )
-            client = self._get_client()
-            client.headers['User-Agent'] = user_agent
-            for cookie in cookies:
-                client.cookies.set(
-                    cookie['name'], cookie['value'],
-                    domain=cookie['domain'], path=cookie['path'],
-                )
-            return html
 
     async def scrape_chapter_list(self, series_url: str) -> List[dict]:
         chapters = parse_chapter_list(await self._get_text(series_url))

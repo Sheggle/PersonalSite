@@ -35,7 +35,7 @@ class CloudflareClearanceTests(unittest.IsolatedAsyncioTestCase):
                 'domain': '.ravenscans.org', 'path': '/',
             }],
         ))
-        with patch('ripraven.scraper.fetch_with_clearance', clearance):
+        with patch('ripraven.sources.fetch_with_clearance', clearance):
             pages = await asyncio.gather(*(
                 self.scraper._get_text(f'https://ravenscans.org/manga/series-{i}/')
                 for i in range(3)
@@ -52,7 +52,7 @@ class CloudflareClearanceTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         clearance = AsyncMock()
-        with patch('ripraven.scraper.fetch_with_clearance', clearance):
+        with patch('ripraven.sources.fetch_with_clearance', clearance):
             with self.assertRaises(httpx.HTTPStatusError):
                 await self.scraper._get_text('https://ravenscans.org/manga/private/')
         clearance.assert_not_awaited()

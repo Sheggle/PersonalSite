@@ -20,6 +20,8 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from .cloudflare import fetch_with_clearance
+
 logger = logging.getLogger(__name__)
 
 USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
@@ -53,6 +55,13 @@ def describe_exc(e: BaseException) -> str:
     return f"{type(e).__name__}: {text}" if text else type(e).__name__
 
 
+def _is_cloudflare_challenge(response: httpx.Response) -> bool:
+    return response.status_code in (403, 503) and (
+        response.headers.get('cf-mitigated') == 'challenge'
+        or '<title>Just a moment' in response.text[:4096]
+    )
+
+
 class ChapterSource:
     name = 'source'
     home = ''
@@ -62,6 +71,12 @@ class ChapterSource:
         self._image_sem: Optional[asyncio.Semaphore] = None
         # host -> when it last failed a whole chapter.
         self._host_down: Dict[str, float] = {}
+        self._challenge_lock: Optional[asyncio.Lock] = None
+
+    def _get_challenge_lock(self) -> asyncio.Lock:
+        if self._challenge_lock is None:
+            self._challenge_lock = asyncio.Lock()
+        return self._challenge_lock
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -93,8 +108,28 @@ class ChapterSource:
 
     async def _get_text(self, url: str) -> str:
         response = await self._get_client().get(url)
-        response.raise_for_status()
-        return response.text
+        if not _is_cloudflare_challenge(response):
+            response.raise_for_status()
+            return response.text
+
+        # One Chrome instance clears a challenge shared by every series.
+        async with self._get_challenge_lock():
+            response = await self._get_client().get(url)
+            if not _is_cloudflare_challenge(response):
+                response.raise_for_status()
+                return response.text
+            logger.info("🦅 clearing Cloudflare challenge for %s", url)
+            html, user_agent, cookies = await fetch_with_clearance(
+                url, navigation_timeout_s=REQUEST_TIMEOUT_S,
+            )
+            client = self._get_client()
+            client.headers['User-Agent'] = user_agent
+            for cookie in cookies:
+                client.cookies.set(
+                    cookie['name'], cookie['value'],
+                    domain=cookie['domain'], path=cookie['path'],
+                )
+            return html
 
     async def scrape_chapter_list(self, series_url: str) -> List[dict]:
         raise NotImplementedError
