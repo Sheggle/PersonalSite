@@ -141,6 +141,9 @@ class ChapterSource:
         """Return an unambiguous series URL, or None when there is no match."""
         return None
 
+    def page_name(self, idx: int, url: str) -> str:
+        return url.rsplit('/', 1)[-1].split('?')[0] or f"{idx:03d}.jpg"
+
     async def _fetch_image(self, url: str) -> bytes:
         last_err: Optional[Exception] = None
         for attempt in range(1, IMAGE_ATTEMPTS + 1):
@@ -186,7 +189,7 @@ class ChapterSource:
 
         async def _download(idx: int, u: str):
             nonlocal fetched
-            name = u.rsplit('/', 1)[-1].split('?')[0] or f"{idx:03d}.jpg"
+            name = self.page_name(idx, u)
             out_path = save_dir / name
             if out_path.exists() and out_path.stat().st_size > 0:
                 return
@@ -318,6 +321,12 @@ class AsuraScraper(ChapterSource):
         if not match or not match.get('public_url'):
             return None
         return urljoin(self.home, match['public_url'])
+
+    def page_name(self, idx: int, url: str) -> str:
+        # Asura names some pages by a hash (001, 002, 24dd55, 004...); the
+        # reader orders pages by filename, so name them by position instead.
+        ext = Path(urlparse(url).path).suffix.lower() or '.jpg'
+        return f"{idx + 1:03d}{ext}"
 
     async def scrape_chapter_list(self, series_url: str) -> List[dict]:
         return parse_asura_chapter_list(await self._get_text(series_url), series_url)
