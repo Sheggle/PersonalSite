@@ -16,8 +16,12 @@
 - `/api/tools/whatsapp/send|messages|health` — WhatsApp proxy to Shelly bot (auth: `X-PP-Key`)
 - `/api/nightly/proposals` — Nightly agent proposal CRUD (auth: `X-PP-Key`)
 - `/api/nightly/runs` — Nightly run summaries (auth: `X-PP-Key`)
-- `/api/ripraven/` — Manga reader API
+- `/api/ripraven/` — Manga reader API (auth: Google login, see below)
+- `/api/auth/login|callback|logout` — Google sign-in for RipRaven
 - `/api/health` — Health check
+
+## RipRaven sign-in
+`/ripraven*`, `/api/ripraven*` and `/rip_raven.html` require a Google login by `ALLOWED_EMAIL` (default `sappie.konig@gmail.com`); `backend/auth.py` does it as one HTTP middleware. Pages redirect to `/api/auth/login`, API calls get 401, and without OAuth config the gate returns 503 (fails closed). The session is an HS256 JWT cookie (`sheggle_session`, 90 days). OAuth client: GCP project `personal-agent-485520`, web client "sheggle.com login", redirect URI `https://sheggle.com/api/auth/callback`; the consent screen is in Testing mode, so the account must be a listed test user. `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `SESSION_SECRET` live in the root-only drop-in `/etc/systemd/system/sheggle.service.d/20-google-login.conf`; rotating `SESSION_SECRET` logs every browser out. The ravenscans userscript (`ripraven.user.js`) calls the API cross-site and only works while the browser holds a session cookie.
 
 ## House Decision Flow
 States: `new → sent_to_gf → approved → booked` (reject from any)

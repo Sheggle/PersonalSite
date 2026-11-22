@@ -18,6 +18,7 @@ from backend.tools.gmail import router as gmail_router
 from backend.tools.whatsapp import router as whatsapp_router
 from backend.houses import router as houses_router
 from backend.nightly import router as nightly_router
+from backend.auth import auth_middleware, router as auth_router
 
 # Uvicorn configures only its own loggers and nothing sets up the root one, so
 # everything this app logs below WARNING is swallowed by logging's last-resort
@@ -84,6 +85,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Google sign-in gate for RipRaven (see backend/auth.py)
+app.middleware("http")(auth_middleware)
+app.include_router(auth_router, prefix="/api/auth")
 
 # Initialize RipRaven comic server
 # Use absolute path relative to the project root
