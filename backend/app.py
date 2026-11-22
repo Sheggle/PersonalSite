@@ -17,7 +17,6 @@ from backend.pp import router as pp_router
 from backend.tools.gmail import router as gmail_router
 from backend.tools.whatsapp import router as whatsapp_router
 from backend.houses import router as houses_router
-from backend.nightly import router as nightly_router
 from backend.auth import auth_middleware, router as auth_router
 
 # Uvicorn configures only its own loggers and nothing sets up the root one, so
@@ -108,9 +107,6 @@ app.include_router(pp_router, prefix="/api/pp")
 
 # Include house decision routes (under PP)
 app.include_router(houses_router, prefix="/api/pp/houses")
-
-# Include nightly agent proposal routes
-app.include_router(nightly_router, prefix="/api/nightly")
 
 # Include general-purpose tool routes
 app.include_router(gmail_router, prefix="/api/tools/gmail")
@@ -205,11 +201,6 @@ def _frontend_file(filename: str) -> FileResponse:
     return FileResponse(path)
 
 
-@app.get("/")
-def frontend_index():
-    return _frontend_file("index.html")
-
-
 @app.get("/styles.css", include_in_schema=False)
 def frontend_styles():
     return _frontend_file("styles.css")
@@ -218,26 +209,6 @@ def frontend_styles():
 @app.get("/rip_raven.html", include_in_schema=False)
 def legacy_ripraven_page():
     return _frontend_file("rip_raven.html")
-
-
-@app.get("/nightly", include_in_schema=False)
-def nightly_page():
-    return _frontend_file("nightly.html")
-
-
-@app.get("/fons-guide", include_in_schema=False)
-def fons_guide_redirect():
-    return RedirectResponse(url="/fons-guide/v2", status_code=307)
-
-
-@app.get("/fons-guide/v1", include_in_schema=False)
-def fons_guide_v1():
-    return _frontend_file("fons-guide-v1.html")
-
-
-@app.get("/fons-guide/v2", include_in_schema=False)
-def fons_guide_v2():
-    return _frontend_file("fons-guide-v2.html")
 
 
 @app.get("/api/health")

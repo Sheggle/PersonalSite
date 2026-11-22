@@ -6,16 +6,13 @@
 - **RipRaven**: Manga reader package in `ripraven/` (templates, downloader, pattern finder)
 - **PP (Personal Persistent)**: Todo + House decision API in `backend/pp.py` and `backend/houses.py`
 - **Tools**: General-purpose agent tools in `backend/tools/` (Gmail, WhatsApp)
-- **Nightly Agent**: Proposal review system in `backend/nightly.py` + `frontend/nightly.html`
-- **Data**: JSON file storage in `data/` (`pp_todos.json`, `pp_houses.json`, `nightly_proposals.json`, `ripraven/`)
+- **Data**: JSON file storage in `data/` (`pp_todos.json`, `pp_houses.json`, `ripraven/`)
 
 ## Key Routes
 - `/api/pp/todos` — Todo CRUD (auth: `X-PP-Key` header)
 - `/api/pp/houses` — House listing state machine (auth: `X-PP-Key`)
 - `/api/tools/gmail/messages` — Gmail read-only API (auth: `X-PP-Key`)
 - `/api/tools/whatsapp/send|messages|health` — WhatsApp proxy to Shelly bot (auth: `X-PP-Key`)
-- `/api/nightly/proposals` — Nightly agent proposal CRUD (auth: `X-PP-Key`)
-- `/api/nightly/runs` — Nightly run summaries (auth: `X-PP-Key`)
 - `/api/ripraven/` — Manga reader API (auth: Google login, see below)
 - `/api/auth/login|callback|logout` — Google sign-in for RipRaven
 - `/api/health` — Health check
@@ -49,8 +46,6 @@ States: `new → sent_to_gf → approved → booked` (reject from any)
 - `backend/tools/gmail.py` — Gmail API tool
 - `backend/tools/whatsapp.py` — WhatsApp proxy tool
 - `scripts/gmail_oauth_setup.py` — One-time Gmail OAuth setup
-- `backend/nightly.py` — Nightly agent proposal API with JSON storage
-- `frontend/nightly.html` — Nightly proposal review UI
 - `ripraven/web_reader.py` — RipRaven API
 
 ## Environment Variables
@@ -59,7 +54,7 @@ Set in `/etc/systemd/system/sheggle.service` on sheggle.com:
 
 | Variable | Purpose |
 |----------|---------|
-| `PP_API_KEY` | Auth key for all `/api/pp/` and `/api/nightly/` endpoints |
+| `PP_API_KEY` | Auth key for all `/api/pp/` endpoints |
 | `GMAPS_API_KEY` | Google Maps API (travel time in house listings) |
 | `APNS_KEY_ID` | APNs push notification key ID (XNY5F5NFLC) |
 | `APNS_TEAM_ID` | Apple Developer Team ID (3V7YQY3S3D) |
@@ -110,11 +105,3 @@ curl localhost:8000/api/health
 - **Disk**: `/` is 38 GB and runs close to full. Series are moved to `/mnt/ripraven-cold/ripraven/downloads/<Series>` (SSHFS storagebox, 1 TB) and symlinked back into `downloads/`; new large series should be created there directly. The worker idles below 500 MB free rather than filling the disk.
 - `series_index.json` is written wholesale from one process's in-memory state, so a second process writing it clobbers the first. To index chapters added out-of-band: `systemctl stop sheggle`, delete `series_index.json`, `systemctl start sheggle` — startup rebuilds it from disk.
 - Chapter `0` (prologue) is downloaded but hidden from the home page's jump-to-chapter dropdown, which filters to numbers > 0.
-
-## Nightly Agent Integration
-This service is the submission target for the nightly documentation agent:
-- Agent posts proposals to `POST /api/nightly/proposals/batch` with `X-PP-Key` header
-- Proposals stored in `data/nightly_proposals.json`
-- Review UI at `https://sheggle.com/nightly.html`
-- Accept/reject a proposal: `PATCH /api/nightly/proposals/{id}` with body `{"status": "accepted"}`
-- Bulk decide a run: `PATCH /api/nightly/runs/{run_id}`
