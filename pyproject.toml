@@ -12,8 +12,6 @@ dependencies = [
     "aiofiles",
     "pillow",
     "httpx[http2]>=0.28.1",
-    "google-api-python-client",
-    "google-auth-oauthlib",
     "pyjwt[crypto]",
     "patchright>=1.64.3",
 ]
