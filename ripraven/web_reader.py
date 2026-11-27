@@ -23,8 +23,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
-from .pattern_finder import ChapterListCache, parse_chapter_url
-from .series_index import SeriesIndex
+from .pattern_finder import ChapterListCache, parse_source_url
+from .series_index import TEXT_FILE, SeriesIndex
 from .tracking import TrackingState
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,8 @@ class InfiniteChapterData(BaseModel):
     chapter_num: str
     chapter_name: str
     images: List[str]
+    # Set for a novel chapter: the chapter as an HTML fragment.
+    text: Optional[str] = None
     page_count: int
     is_complete: bool
 
@@ -151,9 +153,10 @@ class RipRavenAPI:
             self._scraper = None
 
     async def _seed_chapter_list(self, series_name: str, series_url: str,
-                                 chapter_url: str) -> Optional[str]:
+                                 source_url: str) -> Optional[str]:
         """Cache the series' chapter list and return the number of the chapter
-        the import URL points at.
+        the import URL points at, or of the first chapter when it is the
+        series page.
 
         The series page is the only authoritative source of chapter numbers,
         and caching it here means the worker starts downloading on its next
@@ -172,10 +175,16 @@ class RipRavenAPI:
                 await scraper.close()
 
         self.chapter_cache.set_chapters(series_name, chapters, series_url)
-        wanted = urlparse(chapter_url).path.rstrip('/')
+        wanted = urlparse(source_url).path.rstrip('/')
         for ch in chapters:
             if urlparse(ch['url']).path.rstrip('/') == wanted:
                 return str(ch['number'])
+        if wanted == urlparse(series_url).path.rstrip('/'):
+            # The cache sorts by number; chapter 0 is a prologue the home page
+            # does not link to.
+            for ch in self.chapter_cache.get_chapters(series_name) or []:
+                if float(ch['number']) > 0:
+                    return str(ch['number'])
         return None
 
     def _load_templates(self) -> tuple[str, str]:
@@ -210,7 +219,7 @@ class RipRavenAPI:
             return {"exists": False, "complete": False, "page_count": 0}
         page_count = sum(
             1 for p in d.iterdir()
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+            if p.is_file() and (p.suffix.lower() in IMAGE_EXTENSIONS or p.name == TEXT_FILE)
         )
         return {
             "exists": True,
@@ -277,11 +286,11 @@ class RipRavenAPI:
 
         @self.router.post("/track", response_model=TrackResponse)
         async def track(req: TrackRequest):
-            parsed = parse_chapter_url(req.url)
+            parsed = parse_source_url(req.url)
             if not parsed:
                 raise HTTPException(
                     status_code=400,
-                    detail="URL must look like https://ravenscans.org/<series>-chapter-<n>/",
+                    detail="URL must be a series or chapter page on ravenscans.org or asurascans.com",
                 )
             self.tracking.add(
                 series_slug=parsed['series_slug'],
@@ -424,10 +433,12 @@ class RipRavenAPI:
                     logger.exception("❌ Error loading chapter %s", chapter_num)
                     download_status[chapter_name] = "error"
                     continue
+                text_file = self.downloads_dir / series_name / chapter_name / TEXT_FILE
                 chapters_data.append(InfiniteChapterData(
                     chapter_num=chapter_num,
                     chapter_name=chapter_name,
                     images=images,
+                    text=text_file.read_text(encoding="utf-8") if text_file.exists() else None,
                     page_count=len(images),
                     is_complete=status["complete"],
                 ))
@@ -484,7 +495,7 @@ class RipRavenAPI:
         for chapter_dir in series_dir.iterdir():
             if chapter_dir.is_dir() and chapter_dir.name.startswith('chapter_'):
                 has_images = any(
-                    f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
+                    f.is_file() and (f.suffix.lower() in IMAGE_EXTENSIONS or f.name == TEXT_FILE)
                     for f in chapter_dir.iterdir()
                 )
                 if has_images:

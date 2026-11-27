@@ -84,6 +84,37 @@ const ChapterRenderer = {
     },
 
     /**
+     * Fill a chapter container: page images, or the text of a novel chapter
+     */
+    fillChapter: function(chapterContainer, chapter) {
+        if (chapter.text) {
+            const textDiv = document.createElement('div');
+            textDiv.className = 'comic-page novel-text';
+            textDiv.dataset.chapterNum = chapter.chapter_num;
+            textDiv.innerHTML = chapter.text;
+            chapterContainer.appendChild(textDiv);
+            return;
+        }
+
+        chapter.images.forEach((imageUrl, pageIndex) => {
+            const pageDiv = document.createElement('div');
+            pageDiv.className = 'comic-page';
+            pageDiv.dataset.chapterNum = chapter.chapter_num;
+            pageDiv.dataset.pageNum = pageIndex + 1;
+
+            const img = document.createElement('img');
+            // Prepend base path for mounted apps
+            const apiBase = window.RipRaven.APIClient ? window.RipRaven.APIClient.getApiBase() : '';
+            img.src = apiBase ? `${apiBase}/${imageUrl}` : `/${imageUrl}`;
+            img.alt = `Chapter ${chapter.chapter_num} Page ${pageIndex + 1}`;
+            img.loading = 'lazy'; // Lazy load images
+
+            pageDiv.appendChild(img);
+            chapterContainer.appendChild(pageDiv);
+        });
+    },
+
+    /**
      * Render infinite chapters to the DOM
      */
     renderInfiniteChapters: function(chaptersData) {
@@ -109,23 +140,7 @@ const ChapterRenderer = {
             chapterContainer.className = 'chapter-container';
             chapterContainer.dataset.chapterNum = chapter.chapter_num;
 
-            // Add all images for this chapter
-            chapter.images.forEach((imageUrl, pageIndex) => {
-                const pageDiv = document.createElement('div');
-                pageDiv.className = 'comic-page';
-                pageDiv.dataset.chapterNum = chapter.chapter_num;
-                pageDiv.dataset.pageNum = pageIndex + 1;
-
-                const img = document.createElement('img');
-                // Prepend base path for mounted apps
-                const apiBase = window.RipRaven.APIClient ? window.RipRaven.APIClient.getApiBase() : '';
-                img.src = apiBase ? `${apiBase}/${imageUrl}` : `/${imageUrl}`;
-                img.alt = `Chapter ${chapter.chapter_num} Page ${pageIndex + 1}`;
-                img.loading = 'lazy'; // Lazy load images
-
-                pageDiv.appendChild(img);
-                chapterContainer.appendChild(pageDiv);
-            });
+            this.fillChapter(chapterContainer, chapter);
 
             this.comicContainer.appendChild(chapterContainer);
 
@@ -185,22 +200,7 @@ const ChapterRenderer = {
             chapterContainer.className = 'chapter-container';
             chapterContainer.dataset.chapterNum = chapter.chapter_num;
 
-            // Add all images for this chapter
-            chapter.images.forEach((imageUrl, pageIndex) => {
-                const pageDiv = document.createElement('div');
-                pageDiv.className = 'comic-page';
-                pageDiv.dataset.chapterNum = chapter.chapter_num;
-                pageDiv.dataset.pageNum = pageIndex + 1;
-
-                const img = document.createElement('img');
-                const apiBase = window.RipRaven.APIClient ? window.RipRaven.APIClient.getApiBase() : '';
-                img.src = apiBase ? `${apiBase}/${imageUrl}` : `/${imageUrl}`;
-                img.alt = `Chapter ${chapter.chapter_num} Page ${pageIndex + 1}`;
-                img.loading = 'lazy';
-
-                pageDiv.appendChild(img);
-                chapterContainer.appendChild(pageDiv);
-            });
+            this.fillChapter(chapterContainer, chapter);
 
             this.comicContainer.appendChild(chapterContainer);
 

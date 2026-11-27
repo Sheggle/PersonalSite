@@ -1,6 +1,6 @@
-"""Scraper for ravenscans.
+"""Scraper for ravenscans and asurascans.
 
-The site serves from ravenscans.org behind a Cloudflare managed challenge.
+Ravenscans serves from ravenscans.org behind a Cloudflare managed challenge.
 Patchright clears it in headed Chrome under Xvfb, then the clearance cookie and
 matching user agent go back to httpx for normal page and image requests. Older
 `ravenscans.net` URLs still sitting in the caches 301 to their .org equivalents,
@@ -16,9 +16,22 @@ Two page shapes matter:
   chapter page  https://ravenscans.org/<slug>-chapter-96/
       Page images live in the `ts_reader.run({...})` JSON blob, already in
       reading order. Mixed extensions within one chapter are normal.
+
+Asurascans sits behind the same challenge and is cleared the same way. Its
+pages are Astro: the data is the `props` attribute of an `<astro-island>`, JSON
+in which every value is wrapped as `[type, value]`.
+
+  series page   https://asurascans.com/comics/<slug>-<hash>
+      `ChapterListReact` island: `chapters` with a `number` each. The chapter
+      page is `<series url>/chapter/<number>`.
+
+  chapter page  https://asurascans.com/comics/<slug>-<hash>/chapter/<n>
+      `ChapterReader` island: `pages` with a `url` each, in reading order.
+      Its CDN answers 403 to a request carrying another site's Referer.
 """
 
 import asyncio
+import html as html_lib
 import json
 import logging
 import re
@@ -30,10 +43,12 @@ from urllib.parse import urlparse
 import httpx
 
 from .cloudflare import fetch_with_clearance
+from .pattern_finder import is_asura
 
 logger = logging.getLogger(__name__)
 
 RAVENSCANS_HOME = 'https://ravenscans.org/'
+ASURA_HOME = 'https://asurascans.com/'
 USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
 
@@ -120,6 +135,46 @@ def parse_chapter_images(html: str) -> List[str]:
     raise RuntimeError("ts_reader payload carries no images")
 
 
+def _astro_props(html: str, component: str) -> dict:
+    """The props of one `<astro-island>`, unwrapped from Astro's
+    `[type, value]` encoding into plain JSON values."""
+    m = re.search(
+        r'<astro-island[^>]*component-url="/_astro/%s\.[^"]*"[^>]*>' % component, html,
+    )
+    props = m and re.search(r'\bprops="([^"]*)"', m.group(0))
+    if not props:
+        raise RuntimeError(f"no {component} data on page")
+
+    def unwrap(value):
+        if isinstance(value, dict):
+            return {k: unwrap(v) for k, v in value.items()}
+        if isinstance(value, list) and len(value) == 2 and isinstance(value[0], int):
+            inner = value[1]
+            return [unwrap(v) for v in inner] if isinstance(inner, list) else unwrap(inner)
+        return value
+
+    return unwrap(json.loads(html_lib.unescape(props.group(1))))
+
+
+def parse_asura_chapter_list(html: str, series_url: str) -> List[dict]:
+    chapters = []
+    for ch in _astro_props(html, 'ChapterListReact').get('chapters') or []:
+        number = ch['number']
+        num = str(int(number)) if float(number).is_integer() else str(number)
+        chapters.append({'number': num, 'url': f"{series_url.rstrip('/')}/chapter/{num}"})
+    return chapters
+
+
+def parse_asura_chapter_images(html: str) -> List[str]:
+    props = _astro_props(html, 'ChapterReader')
+    images = [p['url'] for p in props.get('pages') or [] if p.get('url')]
+    if not images:
+        raise RuntimeError(
+            "chapter is locked" if props.get('isLocked') else "chapter page carries no images"
+        )
+    return images
+
+
 def _is_cloudflare_challenge(response: httpx.Response) -> bool:
     return response.status_code in (403, 503) and (
         response.headers.get('cf-mitigated') == 'challenge'
@@ -141,7 +196,7 @@ class RavenScraper:
                 # Stale .net URLs are still all over the cache; let them redirect.
                 follow_redirects=True,
                 timeout=REQUEST_TIMEOUT_S,
-                headers={'User-Agent': USER_AGENT, 'Referer': RAVENSCANS_HOME},
+                headers={'User-Agent': USER_AGENT},
                 limits=httpx.Limits(
                     max_connections=IMAGE_CONCURRENCY + 4,
                     max_keepalive_connections=IMAGE_CONCURRENCY + 4,
@@ -169,8 +224,13 @@ class RavenScraper:
             await self._client.aclose()
             self._client = None
 
+    async def _get(self, url: str, **kwargs) -> httpx.Response:
+        # Each source only serves its own pages and images to its own Referer.
+        referer = ASURA_HOME if is_asura(url) else RAVENSCANS_HOME
+        return await self._get_client().get(url, headers={'Referer': referer}, **kwargs)
+
     async def _get_text(self, url: str) -> str:
-        response = await self._get_client().get(url)
+        response = await self._get(url)
         if not _is_cloudflare_challenge(response):
             response.raise_for_status()
             return response.text
@@ -178,7 +238,7 @@ class RavenScraper:
         # Only one Chrome instance may clear a challenge. Its cookie is shared
         # by every series, so everyone else retries with the new session first.
         async with self._get_challenge_lock():
-            response = await self._get_client().get(url)
+            response = await self._get(url)
             if not _is_cloudflare_challenge(response):
                 response.raise_for_status()
                 return response.text
@@ -197,7 +257,11 @@ class RavenScraper:
             return html
 
     async def scrape_chapter_list(self, series_url: str) -> List[dict]:
-        chapters = parse_chapter_list(await self._get_text(series_url))
+        html = await self._get_text(series_url)
+        if is_asura(series_url):
+            chapters = parse_asura_chapter_list(html, series_url)
+        else:
+            chapters = parse_chapter_list(html)
         if not chapters:
             raise RuntimeError(f"no chapters parsed from {series_url}")
         return chapters
@@ -206,7 +270,7 @@ class RavenScraper:
         last_err: Optional[Exception] = None
         for attempt in range(1, IMAGE_ATTEMPTS + 1):
             try:
-                r = await self._get_client().get(url, timeout=IMAGE_TIMEOUT_S)
+                r = await self._get(url, timeout=IMAGE_TIMEOUT_S)
                 r.raise_for_status()
                 if not r.content:
                     raise RuntimeError(f"empty body for {url}")
@@ -235,7 +299,8 @@ class RavenScraper:
         """Download every page of a chapter into save_dir, skipping files
         already on disk so an interrupted chapter resumes instead of
         restarting. Returns the total page count of the chapter."""
-        urls = parse_chapter_images(await self._get_text(chapter_url))
+        html = await self._get_text(chapter_url)
+        urls = (parse_asura_chapter_images if is_asura(chapter_url) else parse_chapter_images)(html)
 
         hosts = {urlparse(u).netloc for u in urls}
         down = self._hosts_down(hosts)

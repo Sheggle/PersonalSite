@@ -156,6 +156,29 @@ select:focus {
     margin: 0 auto;
 }
 
+.comic-page.novel-text {
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 1rem 0.75rem 3rem;
+    text-align: left;
+    line-height: 1.7;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 1.15rem;
+    color: #ddd;
+}
+
+.novel-text h2 {
+    margin: 0 0 1.5rem;
+    font-size: 1.4rem;
+    line-height: 1.3;
+    color: #ff6b35;
+}
+
+.novel-text p {
+    margin: 0 0 1em;
+    white-space: pre-line;
+}
+
 /* Floating Chapter Indicator */
 .chapter-indicator {
     position: fixed;

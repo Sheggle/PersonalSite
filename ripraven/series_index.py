@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
 COMPLETION_MARKER = "completed"
+# A novel chapter is one HTML fragment instead of page images.
+TEXT_FILE = "text.html"
 
 
 class SeriesIndex:
@@ -106,7 +108,7 @@ class SeriesIndex:
                 dot = name.rfind('.')
                 if dot == -1:
                     continue
-                if name[dot:].lower() in IMAGE_EXTENSIONS:
+                if name == TEXT_FILE or name[dot:].lower() in IMAGE_EXTENSIONS:
                     page_count += 1
         try:
             last_modified = datetime.fromtimestamp(

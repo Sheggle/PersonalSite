@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """URL parsing + chapter list cache for RipRaven.
 
-Chapter URL shapes, both accepted:
+Two sources, each accepted as a chapter URL or as the series page itself:
 
-  https://ravenscans.org/city-of-sins-chapter-1/               (current)
-  https://ravenscans.net/series/city-of-sins/chapter-524502/   (older)
+  https://ravenscans.org/city-of-sins-chapter-1/               chapter
+  https://ravenscans.net/series/city-of-sins/chapter-524502/   chapter, older
+  https://ravenscans.org/manga/city-of-sins/                   series
 
-The older shape carries an opaque post id where the current one carries the
-chapter number, so `chapter_num` is None for it. Either way the number is only
-authoritative on the series page, which the scraper reads.
+  https://asurascans.com/comics/damn-reincarnation-7de80a82/chapter/1   chapter
+  https://asurascans.com/comics/damn-reincarnation-7de80a82             series
+
+The older ravenscans shape carries an opaque post id where the current one
+carries the chapter number, so `chapter_num` is None for it, as it is for a
+series URL. Either way the number is only authoritative on the series page,
+which the scraper reads.
 """
 
 import json
@@ -24,41 +29,59 @@ logger = logging.getLogger(__name__)
 
 CHAPTER_URL_RE = re.compile(r'^/series/([^/]+)/chapter-[^/]+/?$')
 LEGACY_CHAPTER_URL_RE = re.compile(r'^/([^/]+)-chapter-(\d+(?:-\d+)?)/?$')
+SERIES_URL_RE = re.compile(r'^/(?:manga|series)/([^/]+)/?$')
+# Asura appends a short hash to the series slug (`damn-reincarnation-7de80a82`).
+# The page only resolves with it, but it is noise in a series name.
+ASURA_URL_RE = re.compile(r'^/comics/(([^/]+?)(?:-[0-9a-f]{8})?)(?:/chapter/([^/]+))?/?$')
+
+
+def is_asura(url: str) -> bool:
+    return (urlparse(url).hostname or '').endswith('asurascans.com')
 
 
 def series_url_for(series_slug: str) -> str:
-    """Canonical series page. The site has moved domain and path shape before;
-    every other URL for a series redirects here, so store this one and stop
-    paying the redirect on every refresh."""
+    """Canonical ravenscans series page. The site has moved domain and path
+    shape before; every other URL for a series redirects here, so store this
+    one and stop paying the redirect on every refresh."""
     return f"https://ravenscans.org/manga/{series_slug}/"
 
 
-def parse_chapter_url(url: str) -> Optional[dict]:
-    """Extract series slug (+ chapter number where the URL carries one).
+def parse_source_url(url: str) -> Optional[dict]:
+    """Extract series slug (+ chapter number where the URL carries one) from a
+    chapter or series URL of either source.
 
     Returns ``{'series_slug': 'city-of-sins', 'series_name': 'City_Of_Sins',
     'chapter_num': '1', 'series_url': 'https://ravenscans.org/manga/city-of-sins/'}``
-    or None if the URL doesn't look like a chapter.
+    or None if the URL is neither.
 
-    These URLs spell fractional chapters in hyphen form (``chapter-1-1`` for
-    1.1).
+    Ravenscans URLs spell fractional chapters in hyphen form (``chapter-1-1``
+    for 1.1).
     """
     path = urlparse(url).path
-    m = CHAPTER_URL_RE.match(path)
     chapter_num = None
-    if m:
-        series_slug = m.group(1)
-    else:
-        m = LEGACY_CHAPTER_URL_RE.match(path)
+    if is_asura(url):
+        m = ASURA_URL_RE.match(path)
         if not m:
             return None
-        series_slug = m.group(1)
-        chapter_num = m.group(2).replace('-', '.')
+        series_slug = m.group(2)
+        chapter_num = m.group(3)
+        series_url = f"https://asurascans.com/comics/{m.group(1)}"
+    else:
+        m = CHAPTER_URL_RE.match(path) or SERIES_URL_RE.match(path)
+        if m:
+            series_slug = m.group(1)
+        else:
+            m = LEGACY_CHAPTER_URL_RE.match(path)
+            if not m:
+                return None
+            series_slug = m.group(1)
+            chapter_num = m.group(2).replace('-', '.')
+        series_url = series_url_for(series_slug)
     return {
         'series_slug': series_slug,
         'series_name': series_slug.replace('-', '_').title().replace(' ', '_'),
         'chapter_num': chapter_num,
-        'series_url': series_url_for(series_slug),
+        'series_url': series_url,
     }
 
 

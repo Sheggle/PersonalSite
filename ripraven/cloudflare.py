@@ -1,4 +1,4 @@
-"""Clear RavenScans' interactive Cloudflare challenge with a real Chrome.
+"""Clear a source's interactive Cloudflare challenge with a real Chrome.
 
 The clearance cookie is usable by the regular httpx client afterwards, so the
 browser and its virtual display only live for the duration of one challenge.
@@ -9,6 +9,7 @@ import os
 import shutil
 import time
 from typing import List, Tuple
+from urllib.parse import urlparse
 
 from patchright.async_api import async_playwright
 
@@ -106,10 +107,12 @@ async def fetch_with_clearance(url: str, navigation_timeout_s: int) -> Tuple[str
         await _wait_out_challenge(page)
         html = await page.content()
         user_agent = await page.evaluate('navigator.userAgent')
+        # The site's own cookies, whichever subdomain set them.
+        site = '.'.join(urlparse(page.url).hostname.split('.')[-2:])
         cookies = [
             cookie for cookie in await context.cookies()
-            if cookie['domain'] == 'ravenscans.org'
-            or cookie['domain'].endswith('.ravenscans.org')
+            if cookie['domain'].lstrip('.') == site
+            or cookie['domain'].endswith('.' + site)
         ]
         return html, user_agent, cookies
     finally:

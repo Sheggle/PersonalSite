@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from .pattern_finder import series_url_for
+from .pattern_finder import is_asura, series_url_for
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,8 @@ class TrackingState:
         # that only work via redirect. Pin them to the canonical page.
         changed = False
         for slug, info in state.items():
+            if is_asura(info.get('series_url') or ''):
+                continue
             canonical = series_url_for(slug)
             if info.get('series_url') != canonical:
                 info['series_url'] = canonical
