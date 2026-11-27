@@ -17,7 +17,8 @@ Two page shapes matter:
       Page images live in the `ts_reader.run({...})` JSON blob, already in
       reading order. Mixed extensions within one chapter are normal.
 
-Asurascans sits behind the same challenge and is cleared the same way. Its
+Asurascans challenges only requests that do not look like a browser navigation
+(see HTML_ACCEPT); anything it does challenge is cleared the same way. Its
 pages are Astro: the data is the `props` attribute of an `<astro-island>`, JSON
 in which every value is wrapped as `[type, value]`.
 
@@ -49,9 +50,10 @@ logger = logging.getLogger(__name__)
 
 RAVENSCANS_HOME = 'https://ravenscans.org/'
 ASURA_HOME = 'https://asurascans.com/'
-# What a browser sends when navigating. Asura rejects a valid clearance cookie
-# on a page request that arrives with httpx's default `Accept: */*`, which
-# would put Chrome in front of every single page.
+# What a browser sends when navigating. Asura challenges a page request that
+# arrives with httpx's default `Accept: */*`, clearance cookie or not, and
+# serves the same request unchallenged with this header. Without it Chrome
+# would be launched for every single page.
 HTML_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
 USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
