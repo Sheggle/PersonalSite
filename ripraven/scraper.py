@@ -49,6 +49,10 @@ logger = logging.getLogger(__name__)
 
 RAVENSCANS_HOME = 'https://ravenscans.org/'
 ASURA_HOME = 'https://asurascans.com/'
+# What a browser sends when navigating. Asura rejects a valid clearance cookie
+# on a page request that arrives with httpx's default `Accept: */*`, which
+# would put Chrome in front of every single page.
+HTML_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
 USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
 
@@ -227,10 +231,11 @@ class RavenScraper:
     async def _get(self, url: str, **kwargs) -> httpx.Response:
         # Each source only serves its own pages and images to its own Referer.
         referer = ASURA_HOME if is_asura(url) else RAVENSCANS_HOME
-        return await self._get_client().get(url, headers={'Referer': referer}, **kwargs)
+        headers = {'Referer': referer, **kwargs.pop('headers', {})}
+        return await self._get_client().get(url, headers=headers, **kwargs)
 
     async def _get_text(self, url: str) -> str:
-        response = await self._get(url)
+        response = await self._get(url, headers={'Accept': HTML_ACCEPT})
         if not _is_cloudflare_challenge(response):
             response.raise_for_status()
             return response.text
@@ -238,7 +243,7 @@ class RavenScraper:
         # Only one Chrome instance may clear a challenge. Its cookie is shared
         # by every series, so everyone else retries with the new session first.
         async with self._get_challenge_lock():
-            response = await self._get(url)
+            response = await self._get(url, headers={'Accept': HTML_ACCEPT})
             if not _is_cloudflare_challenge(response):
                 response.raise_for_status()
                 return response.text
